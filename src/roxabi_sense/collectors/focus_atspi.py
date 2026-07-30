@@ -1,8 +1,9 @@
-"""Focused / visible windows via AT-SPI (works on Cosmic without Wayland client).
+"""Focused / visible windows via AT-SPI (Cosmic / Ghostty-friendly).
 
-Uses system python3 + PyGObject (gi) because the uv venv typically has no `gi`.
-Gives app name + window title + ACTIVE flag. Not multi-monitor workspace yet
-(that needs zcosmic_toplevel / foreign-toplevel Wayland client).
+- Resolve AT-SPI 'Unnamed' → /proc comm (ghostty)
+- Dedup focus on (app, normalized_title) only
+- Desktop snapshot fingerprint uses normalized titles (less spinner noise)
+- Attach agent link (grok session) via process tree when possible
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from roxabi_sense.store import Store
+from roxabi_sense.util.proc import find_agent_link, load_grok_sessions, resolve_app_name
+from roxabi_sense.util.titles import normalize_title
 
 KIND = "focus"
 SNAPSHOT = "desktop_snapshot"
@@ -52,6 +55,12 @@ for i in range(n_apps):
         if app is None:
             continue
         app_name = app.get_name() or "unknown"
+        pid = None
+        try:
+            if hasattr(app, "get_process_id"):
+                pid = int(app.get_process_id())
+        except Exception:
+            pid = None
         n_win = app.get_child_count()
         for j in range(n_win):
             frame = app.get_child_at_index(j)
@@ -77,6 +86,7 @@ for i in range(n_apps):
                 "title": title,
                 "active": bool(states.get("ACTIVE")),
                 "role": role,
+                "pid": pid,
             })
     except Exception:
         continue
@@ -91,51 +101,120 @@ class WindowInfo:
     title: str
     active: bool
     role: str
+    pid: int | None = None
+    title_raw: str | None = None
+    agent: dict[str, Any] | None = None
 
 
 class FocusAtspiCollector:
     name = "focus_atspi"
 
-    def __init__(self, probe: Callable[[], list[WindowInfo]] | None = None) -> None:
+    def __init__(
+        self,
+        probe: Callable[[], list[WindowInfo]] | None = None,
+        *,
+        sessions_loader: Callable[[], list[dict[str, Any]]] | None = None,
+    ) -> None:
         self._probe = probe or _default_probe
-        self._last: str | None = None
+        self._sessions_loader = sessions_loader or load_grok_sessions
+        self._last_desktop_fp: str | None = None
+        self._last_focus_key: tuple[str, str] | None = None
 
     def tick(self, store: Store) -> int:
-        windows = self._probe()
-        payload: dict[str, Any] = {
-            "windows": [
-                {
-                    "app": w.app,
-                    "title": w.title,
-                    "active": w.active,
-                    "role": w.role,
-                }
-                for w in windows
-            ],
+        windows = self._enrich(self._probe())
+        wrote = 0
+
+        desktop_fp = _desktop_fingerprint(windows)
+        if desktop_fp != self._last_desktop_fp:
+            self._last_desktop_fp = desktop_fp
+            payload = _desktop_payload(windows)
+            store.append(SNAPSHOT, payload)
+            wrote += 1
+
+        active = next((w for w in windows if w.active), None)
+        if active is None:
+            return wrote
+
+        focus_key = (active.app, active.title)
+        if focus_key == self._last_focus_key:
+            return wrote
+        self._last_focus_key = focus_key
+
+        focus_body: dict[str, Any] = {
+            "app": active.app,
+            "title": active.title,
             "source": "atspi",
         }
-        active = next((w for w in windows if w.active), None)
-        if active is not None:
-            payload["focus"] = {
-                "app": active.app,
-                "title": active.title,
-            }
-        fingerprint = json.dumps(payload, sort_keys=True)
-        if fingerprint == self._last:
-            return 0
-        self._last = fingerprint
-        store.append(SNAPSHOT, payload)
-        if active is not None:
-            store.append(
-                KIND,
-                {
-                    "app": active.app,
-                    "title": active.title,
-                    "source": "atspi",
-                },
+        if active.pid is not None:
+            focus_body["pid"] = active.pid
+        if active.title_raw and active.title_raw != active.title:
+            focus_body["title_raw"] = active.title_raw
+        if active.agent:
+            focus_body["agent"] = active.agent
+        store.append(KIND, focus_body)
+        return wrote + 1
+
+    def _enrich(self, windows: list[WindowInfo]) -> list[WindowInfo]:
+        sessions = self._sessions_loader()
+        out: list[WindowInfo] = []
+        for w in windows:
+            app = resolve_app_name(w.app, w.pid)
+            raw = w.title
+            title = normalize_title(raw)
+            agent = find_agent_link(
+                w.pid,
+                app=app,
+                title=title,
+                sessions=sessions,
             )
-            return 2
-        return 1
+            out.append(
+                WindowInfo(
+                    app=app,
+                    title=title,
+                    active=w.active,
+                    role=w.role,
+                    pid=w.pid,
+                    title_raw=raw if raw != title else None,
+                    agent=agent,
+                )
+            )
+        return out
+
+
+def _desktop_fingerprint(windows: list[WindowInfo]) -> str:
+    """Stable set of visible windows (normalized titles, no spinner churn)."""
+    rows = sorted(
+        (w.app, w.title, w.active, w.pid)
+        for w in windows
+    )
+    return json.dumps(rows, separators=(",", ":"))
+
+
+def _desktop_payload(windows: list[WindowInfo]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "windows": [
+            {
+                "app": w.app,
+                "title": w.title,
+                "active": w.active,
+                "role": w.role,
+                **({"pid": w.pid} if w.pid is not None else {}),
+                **({"title_raw": w.title_raw} if w.title_raw else {}),
+                **({"agent": w.agent} if w.agent else {}),
+            }
+            for w in windows
+        ],
+        "source": "atspi",
+    }
+    active = next((w for w in windows if w.active), None)
+    if active is not None:
+        focus: dict[str, Any] = {"app": active.app, "title": active.title}
+        if active.pid is not None:
+            focus["pid"] = active.pid
+        if active.agent:
+            focus["agent"] = active.agent
+        payload["focus"] = focus
+    return payload
 
 
 def _system_python() -> str:
@@ -169,12 +248,21 @@ def _default_probe() -> list[WindowInfo]:
     for item in raw:
         if not isinstance(item, dict):
             continue
+        pid_raw = item.get("pid")
+        pid: int | None
+        if isinstance(pid_raw, int):
+            pid = pid_raw
+        elif isinstance(pid_raw, str) and pid_raw.isdigit():
+            pid = int(pid_raw)
+        else:
+            pid = None
         out.append(
             WindowInfo(
                 app=str(item.get("app") or "unknown"),
                 title=str(item.get("title") or ""),
                 active=bool(item.get("active")),
                 role=str(item.get("role") or ""),
+                pid=pid,
             )
         )
     return out
