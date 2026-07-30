@@ -11,13 +11,17 @@ _SPINNER_PREFIX = re.compile(
     r"|[◐◓◑◒⣾⣽⣻⢿⡿⣟⣯⣷⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠁⠂⠄]*"
     r")\s*",
 )
+_STATUS_WORDS = (
+    r"Thinking|Responding|Running|"
+    r"Waiting for response…|Waiting for response\.\.\."
+)
 _STATUS_PREFIX = re.compile(
-    r"^(?:-\s*)?(?:Thinking|Responding|Running|Waiting for response…|Waiting for response\.\.\.)\s*-\s*",
+    rf"^(?:-\s*)?(?:{_STATUS_WORDS})\s*-\s*",
     re.IGNORECASE,
 )
 # Grok sometimes prefixes mid-title status without trailing " - " pattern first
 _STATUS_INLINE = re.compile(
-    r"^(?:[\u2800-\u28FF]+\s*)?(?:Thinking|Responding|Waiting for response…|Waiting for response\.\.\.)\s*-\s*",
+    rf"^(?:[\u2800-\u28FF]+\s*)?(?:{_STATUS_WORDS})\s*-\s*",
     re.IGNORECASE,
 )
 
