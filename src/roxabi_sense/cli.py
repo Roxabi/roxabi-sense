@@ -1,4 +1,4 @@
-"""CLI entrypoint."""
+"""CLI entrypoint — thin surface over store queries."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from roxabi_sense import __version__
 from roxabi_sense.config import load_config
 from roxabi_sense.daemon import collect_once, run_daemon
 from roxabi_sense.paths import default_config_path
-from roxabi_sense.store import Store
+from roxabi_sense.store import STATUS_KINDS, Store
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,9 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("daemon", help="Run collectors in foreground")
     sub.add_parser("mcp", help="Run MCP stdio server (not implemented)")
     sub.add_parser("install-service", help="Install systemd --user unit (not implemented)")
-
-    p_once = sub.add_parser("once", help="Single collect tick then exit")
-    _ = p_once
+    sub.add_parser("once", help="Single collect tick then exit")
 
     args = parser.parse_args(argv)
     if not args.cmd:
@@ -87,30 +85,19 @@ def cmd_status(db_path: Path) -> int:
         print(f"db: missing ({db_path})")
         print("hint: run `sense once` or `sense daemon`")
         return 0
-    store = Store(db_path)
-    print(f"db: {db_path}")
-    print(f"events: {store.count()}")
-    print(f"last_tick: {store.get_meta('last_tick') or '—'}")
-    print(f"daemon_started: {store.get_meta('daemon_started') or '—'}")
-    print(f"machine: {store.get_meta('machine') or '—'}")
-    last = store.last_event()
-    if last:
-        payload_preview = json.dumps(last.payload, ensure_ascii=False)[:120]
-        print(f"last_event: {last.ts} {last.kind} {payload_preview}")
-    for kind in (
-        "agent_sessions_snapshot",
-        "process_snapshot",
-        "idle",
-        "media_snapshot",
-        "tmux_snapshot",
-        "desktop_snapshot",
-        "focus",
-    ):
-        ev = store.last_by_kind(kind)
-        if ev:
+    with Store(db_path) as store:
+        print(f"db: {db_path}")
+        print(f"events: {store.count()}")
+        print(f"last_tick: {store.get_meta('last_tick') or '—'}")
+        print(f"daemon_started: {store.get_meta('daemon_started') or '—'}")
+        print(f"machine: {store.get_meta('machine') or '—'}")
+        last = store.last_event()
+        if last:
+            payload_preview = json.dumps(last.payload, ensure_ascii=False)[:120]
+            print(f"last_event: {last.ts} {last.kind} {payload_preview}")
+        for kind, ev in store.latest_by_kinds(STATUS_KINDS).items():
             preview = json.dumps(ev.payload, ensure_ascii=False)[:100]
             print(f"  {kind}: {ev.ts} {preview}")
-    store.close()
     return 0
 
 
@@ -118,33 +105,23 @@ def cmd_day(db_path: Path, *, day: str | None, as_json: bool, limit: int) -> int
     if not db_path.is_file():
         print(f"db: missing ({db_path})", file=sys.stderr)
         return 1
-    store = Store(db_path)
-    start, end = store.day_bounds(day)
-    # Prefer snapshot kinds for readable day view
-    events = store.events_between(start, end, limit=limit * 3)
-    interesting = {
-        "agent_sessions_snapshot",
-        "agent_session",
-        "process_snapshot",
-        "idle",
-        "media",
-        "media_snapshot",
-        "tmux_snapshot",
-        "focus",
-        "desktop_snapshot",
-    }
-    filtered = [e for e in events if e.kind in interesting][:limit]
+    try:
+        with Store(db_path) as store:
+            start, end = store.day_bounds(day)
+            events = store.events_for_day(day, limit=limit)
+    except ValueError as exc:
+        print(f"sense day: {exc}", file=sys.stderr)
+        return 2
     if as_json:
-        for e in filtered:
+        for e in events:
             row = {"ts": e.ts, "kind": e.kind, "payload": e.payload}
             print(json.dumps(row, ensure_ascii=False))
     else:
         label = day or "today"
-        print(f"sense day ({label})  {start} → {end}  n={len(filtered)}")
-        for e in filtered:
+        print(f"sense day ({label})  {start} → {end}  n={len(events)}")
+        for e in events:
             summary = _summarize(e.kind, e.payload)
             print(f"{e.ts}  {e.kind:24}  {summary}")
-    store.close()
     return 0
 
 
@@ -189,7 +166,6 @@ def _summarize(kind: str, payload: dict) -> str:
         n = len(payload.get("windows") or [])
         return f"n={n} focus={focus.get('app')}: {focus.get('title')}"
     return json.dumps(payload, ensure_ascii=False)[:100]
-
 
 
 if __name__ == "__main__":

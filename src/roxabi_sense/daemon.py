@@ -35,6 +35,22 @@ def build_collectors(cfg: SenseConfig) -> list[Any]:
     return collectors
 
 
+def tick_all(collectors: list[Any], store: Store) -> int:
+    """Run one tick on each collector; never let one failure abort the rest."""
+    wrote = 0
+    with store.batch():
+        for c in collectors:
+            try:
+                wrote += int(c.tick(store) or 0)
+            except Exception as exc:  # noqa: BLE001 — isolate collectors
+                print(f"sense collector error [{getattr(c, 'name', '?')}]: {exc}", flush=True)
+    return wrote
+
+
+def _utc_stamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def run_daemon(cfg: SenseConfig) -> int:
     store = Store(cfg.db_path)
     collectors = build_collectors(cfg)
@@ -47,7 +63,7 @@ def run_daemon(cfg: SenseConfig) -> int:
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
 
-    store.set_meta("daemon_started", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    store.set_meta("daemon_started", _utc_stamp())
     store.set_meta("machine", cfg.machine)
     print(
         f"sense daemon: db={cfg.db_path} poll={cfg.poll_seconds}s "
@@ -56,16 +72,10 @@ def run_daemon(cfg: SenseConfig) -> int:
     )
 
     while not stop:
-        wrote = 0
-        for c in collectors:
-            try:
-                wrote += c.tick(store)
-            except Exception as exc:  # noqa: BLE001 — isolate collectors
-                print(f"sense collector error [{c.name}]: {exc}", flush=True)
-        store.set_meta("last_tick", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        wrote = tick_all(collectors, store)
+        store.set_meta("last_tick", _utc_stamp())
         if wrote:
             print(f"sense tick: +{wrote} events (total={store.count()})", flush=True)
-        # Sleep in small slices so SIGTERM is responsive
         deadline = time.monotonic() + cfg.poll_seconds
         while not stop and time.monotonic() < deadline:
             time.sleep(0.2)
@@ -76,11 +86,12 @@ def run_daemon(cfg: SenseConfig) -> int:
 
 
 def collect_once(cfg: SenseConfig) -> int:
-    """Single tick (used by CLI status --collect)."""
+    """Single tick (CLI once / status --collect). Isolates collector failures."""
     store = Store(cfg.db_path)
-    n = 0
-    for c in build_collectors(cfg):
-        n += c.tick(store)
-    store.set_meta("last_tick", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-    store.close()
-    return n
+    collectors = build_collectors(cfg)
+    try:
+        n = tick_all(collectors, store)
+        store.set_meta("last_tick", _utc_stamp())
+        return n
+    finally:
+        store.close()

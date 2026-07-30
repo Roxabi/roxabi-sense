@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from roxabi_sense.store import Store
 
 KIND = "media"
+_PLAYERCTL_CANDIDATES = (
+    "/usr/bin/playerctl",
+    "/usr/local/bin/playerctl",
+)
 
 
 class MprisCollector:
@@ -17,7 +21,14 @@ class MprisCollector:
 
     def __init__(self) -> None:
         self._last: str | None = None
-        self._playerctl = shutil.which("playerctl")
+        self._playerctl = self._resolve_playerctl()
+
+    @staticmethod
+    def _resolve_playerctl() -> str | None:
+        for p in _PLAYERCTL_CANDIDATES:
+            if Path(p).is_file():
+                return p
+        return None
 
     def tick(self, store: Store) -> int:
         if not self._playerctl:
@@ -33,9 +44,7 @@ class MprisCollector:
             return 0
         self._last = fingerprint
         store.append(KIND + "_snapshot", {"players": snapshot})
-        for item in snapshot:
-            store.append(KIND, item)
-        return 1 + len(snapshot)
+        return 1
 
     def _list_players(self) -> list[str]:
         assert self._playerctl

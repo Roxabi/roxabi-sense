@@ -1,8 +1,1 @@
-from roxabi_sense.cli import main
-
-
-def test_version_flag() -> None:
-    try:
-        main(["--version"])
-    except SystemExit as exc:
-        assert exc.code == 0
+"""Kept for historical path; version coverage lives in test_cli."""

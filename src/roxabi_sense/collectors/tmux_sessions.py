@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from roxabi_sense.store import Store
 
 KIND = "tmux"
+_TMUX_CANDIDATES = ("/usr/bin/tmux", "/usr/local/bin/tmux")
 
 
 class TmuxSessionsCollector:
@@ -17,7 +18,7 @@ class TmuxSessionsCollector:
 
     def __init__(self) -> None:
         self._last: str | None = None
-        self._tmux = shutil.which("tmux")
+        self._tmux = next((p for p in _TMUX_CANDIDATES if Path(p).is_file()), None)
 
     def tick(self, store: Store) -> int:
         if not self._tmux:
