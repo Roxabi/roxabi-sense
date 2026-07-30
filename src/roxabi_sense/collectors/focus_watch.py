@@ -30,7 +30,6 @@ except Exception as e:
 
 # Coalesce bursts (spinners) — still event-driven, just not every frame.
 _pending = False
-_loop = None
 
 def _flush():
     global _pending
@@ -97,11 +96,19 @@ class FocusAtspiWatch:
     def start(self) -> None:
         if self.running:
             return
+        # Reap previous dead process if any
+        if self._proc is not None and self._proc.poll() is not None:
+            try:
+                self._proc.wait(timeout=0.1)
+            except Exception:  # noqa: BLE001
+                pass
+            self._proc = None
         self._stop.clear()
+        # stderr=DEVNULL: avoids pipe fill hang (GLib/AT-SPI noise)
         self._proc = subprocess.Popen(
             [_system_python(), "-u", "-c", _LISTENER_SCRIPT],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
         )
@@ -116,12 +123,19 @@ class FocusAtspiWatch:
         self._stop.set()
         proc = self._proc
         if proc is not None:
+            # Unblock reader stuck on stdout
+            try:
+                if proc.stdout is not None:
+                    proc.stdout.close()
+            except Exception:  # noqa: BLE001
+                pass
             try:
                 proc.terminate()
                 proc.wait(timeout=timeout)
             except Exception:  # noqa: BLE001
                 try:
                     proc.kill()
+                    proc.wait(timeout=timeout)
                 except Exception:  # noqa: BLE001
                     pass
         self._proc = None
@@ -149,6 +163,9 @@ class FocusAtspiWatch:
                 if msg.get("error"):
                     print(f"sense focus-watch: {msg['error']}", flush=True)
                     continue
+                if msg.get("warn"):
+                    print(f"sense focus-watch: {msg['warn']}", flush=True)
+                    continue
                 if msg.get("type") == "ready":
                     print("sense focus-watch: AT-SPI events armed", flush=True)
                     continue
@@ -157,9 +174,6 @@ class FocusAtspiWatch:
                         self._on_event(msg)
                     except Exception as exc:  # noqa: BLE001
                         print(f"sense focus-watch callback error: {exc}", flush=True)
-        finally:
-            # surface stderr if process dies
-            if proc.stderr is not None and not self._stop.is_set():
-                err = proc.stderr.read()
-                if err:
-                    print(f"sense focus-watch stderr: {err[:500]}", flush=True)
+        except ValueError:
+            # stdout closed during stop()
+            pass
