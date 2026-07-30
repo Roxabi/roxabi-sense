@@ -1,0 +1,21 @@
+# Local fast-feedback hooks. Machine-global core.hooksPath dispatches these
+# (see ~/projects/scripts/git-hooks). Do NOT run `lefthook install` here.
+pre-commit:
+  commands:
+    lint:
+      run: uv run ruff check .
+    typecheck:
+      run: uv run pyright
+    check-file-length:
+      run: tools/check_file_length.sh
+    check-folder-size:
+      run: tools/check_folder_size.sh
+
+pre-push:
+  commands:
+    trufflehog:
+      run: trufflehog git file://. --only-verified --fail
+    license:
+      run: uv run tools/license_check.py
+    tests:
+      run: uv run pytest

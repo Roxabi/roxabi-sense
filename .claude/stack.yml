@@ -1,0 +1,104 @@
+# .claude/stack.yml — roxabi-sense
+# Local workstation attention sensor: collectors → SQLite → CLI / MCP / NATS opt-in.
+# Not factory monorepo, not silex-boilerplate / hosted web. See docs/ARCHITECTURE.md.
+
+schema_version: "1.0"
+
+runtime: python
+package_manager: uv
+
+backend:
+  framework: none                  # CLI + systemd user daemon, not FastAPI product
+  orm: none                        # SQLite via stdlib / thin wrapper
+  path: src/roxabi_sense
+
+frontend:
+  framework: none
+  path: ""
+  ui_package: ""
+  ui_src: ""
+
+shared:
+  types: ""
+  ui: ""
+  config: ""
+
+build:
+  orchestrator: none
+  orchestrator_config: ""
+  formatter: ruff
+  formatter_config: pyproject.toml
+  formatter_fix_cmd: "uv run ruff format && uv run ruff check --fix"
+
+testing:
+  unit: pytest
+  e2e: none
+
+hooks:
+  tool: lefthook                   # config only — machine uses global core.hooksPath; never lefthook install
+  # SSOT: ~/projects/scripts/git-hooks + conventions.ssot.md "Git hooks"
+
+lsp:
+  enabled: true
+  server: pyright
+
+deploy:
+  platform: none                   # systemd --user on laptop/M₂; not CF Pages / Quadlet hub
+  secrets_cmd: ""
+
+release:
+  model: trunk                     # small tool — tags at main, no staging-train promote
+  class: NONE
+  component: roxabi-sense          # tags: roxabi-sense/vX.Y.Z
+  version_files: ["pyproject.toml"]
+
+docs:
+  framework: none
+  path: docs
+  format: md
+
+quality_gates:
+  file_length:
+    enabled: true
+    max_lines: 300
+    globs: ["src/**/*.py"]
+    exemptions_file: tools/file_exemptions.txt
+  folder_size:
+    enabled: true
+    max_files: 12
+    globs: ["src/**"]
+    exemptions_file: tools/folder_exemptions.txt
+  import_layers:
+    enabled: false                 # enable when collectors/store/surfaces layers stabilize
+    stage: pre-push
+    config: .importlinter
+
+commands:
+  dev: "uv run sense --help"
+  build: "uv build"
+  test: "uv run pytest"
+  lint: "uv run ruff check"
+  typecheck: "uv run pyright"
+  format: "uv run ruff format && uv run ruff check --fix"
+  install: "uv sync"
+  worktree_setup: tools/worktree-setup.sh
+  worktree_teardown: tools/worktree-teardown.sh
+
+artifacts:
+  analyses: artifacts/analyses
+  specs: artifacts/specs
+  frames: artifacts/frames
+  plans: artifacts/plans
+
+standards:
+  backend: docs/standards/backend-patterns.md
+  frontend: docs/standards/frontend-patterns.md
+  testing: docs/standards/testing.md
+  code_review: docs/standards/code-review.md
+  architecture: docs/architecture/
+  configuration: docs/standards/configuration.md
+  deployment: docs/guides/deployment.md
+  troubleshooting: docs/guides/troubleshooting.md
+  issue_management: docs/processes/issue-management.md
+  dev_process: docs/processes/dev-process.md
+  contributing: docs/contributing.md

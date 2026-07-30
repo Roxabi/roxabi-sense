@@ -1,0 +1,11 @@
+{
+  "release-type": "python",
+  "target-branch": "main",
+  "packages": {
+    ".": {
+      "component": "roxabi-sense",
+      "package-name": "roxabi-sense",
+      "tag-separator": "/"
+    }
+  }
+}

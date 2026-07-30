@@ -1,0 +1,9 @@
+{
+  "_comment": "Project-local license policy. Extends the dev-core canonical allowed-license set in tools/license_check.py.",
+  "allowlist": [
+    "typing_extensions",
+    "packaging",
+    "roxabi-sense"
+  ],
+  "overrides": {}
+}

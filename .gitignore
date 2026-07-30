@@ -10,10 +10,13 @@ dist/
 build/
 *.egg-info/
 .cocoindex_code/
-uv.lock
+# uv.lock is committed — CI uses `uv sync --frozen`
 .DS_Store
 *.db
 *.db-wal
 *.db-shm
 .env
 .direnv/
+.env.local
+.venv
+reports/
