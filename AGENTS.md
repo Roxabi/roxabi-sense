@@ -20,7 +20,7 @@ Local workstation **attention sensor**: collectors → SQLite → CLI / MCP / op
 
 ## Implementation order
 
-1. Agent-session collector + store + `sense status` / `sense day`
+1. Agent-session collector + store + `sense status` / `sense day` / `sense recap`
 2. Idle + focus (behind interface; Cosmic/Wayland may lag)
 3. MCP tools
 4. NATS opt-in for factory Sentinelle

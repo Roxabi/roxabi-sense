@@ -11,6 +11,7 @@ from roxabi_sense import __version__
 from roxabi_sense.config import load_config
 from roxabi_sense.daemon import collect_once, run_daemon
 from roxabi_sense.paths import default_config_path
+from roxabi_sense.report import compile_day_recap, format_day_recap
 from roxabi_sense.store import STATUS_KINDS, Store
 
 
@@ -35,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Run one collect cycle before printing status",
     )
 
-    p_day = sub.add_parser("day", help="Day timeline")
+    p_day = sub.add_parser("day", help="Day timeline (raw events)")
     p_day.add_argument(
         "--date",
         dest="day",
@@ -44,6 +45,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_day.add_argument("--json", action="store_true", help="JSON lines output")
     p_day.add_argument("--limit", type=int, default=200, help="Max events to show")
+
+    p_recap = sub.add_parser("recap", help="Compiled day recap (focus / repos / agents)")
+    p_recap.add_argument(
+        "--date",
+        dest="day",
+        default=None,
+        help="YYYY-MM-DD (local day, default: today)",
+    )
+    p_recap.add_argument("--json", action="store_true", help="JSON object output")
 
     sub.add_parser("daemon", help="Run collectors in foreground")
     sub.add_parser("mcp", help="Run MCP stdio server (not implemented)")
@@ -69,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_status(cfg.db_path)
     if args.cmd == "day":
         return cmd_day(cfg.db_path, day=args.day, as_json=args.json, limit=args.limit)
+    if args.cmd == "recap":
+        return cmd_recap(cfg.db_path, day=args.day, as_json=args.json)
     if args.cmd in {"mcp", "install-service"}:
         print(
             f"sense {__version__}: command '{args.cmd}' not implemented yet",
@@ -122,6 +134,28 @@ def cmd_day(db_path: Path, *, day: str | None, as_json: bool, limit: int) -> int
         for e in events:
             summary = _summarize(e.kind, e.payload)
             print(f"{e.ts}  {e.kind:24}  {summary}")
+        if len(events) >= limit:
+            print(
+                f"(capped at {limit}; use `sense recap` for a compiled day summary)",
+                file=sys.stderr,
+            )
+    return 0
+
+
+def cmd_recap(db_path: Path, *, day: str | None, as_json: bool) -> int:
+    if not db_path.is_file():
+        print(f"db: missing ({db_path})", file=sys.stderr)
+        return 1
+    try:
+        with Store(db_path) as store:
+            recap = compile_day_recap(store, day)
+    except ValueError as exc:
+        print(f"sense recap: {exc}", file=sys.stderr)
+        return 2
+    if as_json:
+        print(json.dumps(recap.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(format_day_recap(recap))
     return 0
 
 

@@ -90,7 +90,8 @@ systemctl --user enable --now roxabi-sense.service
 
 # 3. human CLI
 uv run sense status
-uv run sense day --from 14:00 --to 16:00
+uv run sense recap              # compiled day summary
+uv run sense day --date 2026-07-30  # raw event dump
 
 # 4. agents (Claude Code / Grok) — MCP stdio
 #    mcpServers.sense.command = ["uv", "run", "--directory", ".../roxabi-sense", "sense", "mcp"]
