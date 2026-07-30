@@ -189,10 +189,7 @@ class FocusAtspiCollector:
 
 
 def _desktop_fingerprint(windows: list[WindowInfo]) -> str:
-    rows = sorted(
-        (w.app, w.title, w.active, w.pid, _agent_key(w.agent))
-        for w in windows
-    )
+    rows = sorted((w.app, w.title, w.active, w.pid, _agent_key(w.agent)) for w in windows)
     return json.dumps(rows, separators=(",", ":"))
 
 

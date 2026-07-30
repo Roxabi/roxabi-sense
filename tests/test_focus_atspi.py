@@ -36,15 +36,17 @@ def test_focus_dedup_and_normalize(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "roxabi_sense.collectors.focus_atspi.find_agent_link",
-        lambda pid, app=None, title=None, sessions=None, tree=None: {
-            "agent": "grok",
-            "session_id": "sid-1",
-            "cwd": "/tmp/p",
-            "pid": 99,
-            "match": "session_pid",
-        }
-        if pid == 7280
-        else None,
+        lambda pid, app=None, title=None, sessions=None, tree=None: (
+            {
+                "agent": "grok",
+                "session_id": "sid-1",
+                "cwd": "/tmp/p",
+                "pid": 99,
+                "match": "session_pid",
+            }
+            if pid == 7280
+            else None
+        ),
     )
     monkeypatch.setattr(
         "roxabi_sense.collectors.focus_atspi.children_map",

@@ -28,9 +28,13 @@ class SenseConfig:
     # Focus: AT-SPI EventListener (primary) + slow backup poll
     focus_events: bool = True
     focus_backup_seconds: float = 30.0
+    offline_threshold_s: float = 120.0
     agent_sessions: bool = True
     process_presence: bool = True
     idle: bool = True
+    # auto | wayland | logind | off — ADR-002 single writer
+    idle_backend: str = "auto"
+    idle_threshold_s: float = 300.0
     mpris: bool = True
     tmux: bool = True
     focus: bool = True
@@ -54,6 +58,8 @@ def load_config(path: Path | None = None) -> SenseConfig:
             cfg.focus_events = bool(daemon["focus_events"])
         if "focus_backup_seconds" in daemon:
             cfg.focus_backup_seconds = float(daemon["focus_backup_seconds"])
+        if "offline_threshold_s" in daemon:
+            cfg.offline_threshold_s = float(daemon["offline_threshold_s"])
         for key in (
             "agent_sessions",
             "process_presence",
@@ -64,8 +70,17 @@ def load_config(path: Path | None = None) -> SenseConfig:
         ):
             if key in collectors:
                 setattr(cfg, key, bool(collectors[key]))
+        if "idle_backend" in collectors:
+            cfg.idle_backend = str(collectors["idle_backend"]).lower()
+        if "idle_threshold_s" in collectors:
+            cfg.idle_threshold_s = float(collectors["idle_threshold_s"])
         if "process_names" in collectors:
             cfg.process_names = tuple(str(x) for x in collectors["process_names"])
         if "machine" in nats:
             cfg.machine = str(nats["machine"])
+    # Env overrides (tests / install)
+    import os
+
+    if os.environ.get("SENSE_DB"):
+        cfg.db_path = Path(os.environ["SENSE_DB"])
     return cfg

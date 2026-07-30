@@ -17,10 +17,7 @@ def test_waiting_for_response() -> None:
         normalize_title("⠙ - Waiting for response… - Hermes Slack kit - grok")
         == "Hermes Slack kit - grok"
     )
-    assert (
-        normalize_title("Waiting for response... - Task - grok")
-        == "Task - grok"
-    )
+    assert normalize_title("Waiting for response... - Task - grok") == "Task - grok"
 
 
 def test_sanitize_strips_escapes() -> None:

@@ -12,11 +12,8 @@ from roxabi_sense.util.titles import normalize_title
 # Ignore micro-focus flickers when attributing dwell time.
 MIN_DWELL_S = 3.0
 
-# Degraded idle: no activity signal for this long → away from last activity.
-# Not logind IdleHint — see IdleCollector (often stuck false without lock screen).
+# Degraded idle: silence ≥ this long → away from last activity (ADR-002).
 IDLE_GAP_S = 300.0
-
-# Signals that count as "still here" for degraded mode (not process noise).
 _ACTIVITY_KINDS = frozenset({"focus", "desktop_snapshot"})
 
 _APP_ALIASES: dict[str, str] = {
@@ -67,8 +64,81 @@ def horizon_dt(day_end_z: str, now: datetime | None) -> datetime:
     return min(n, end)
 
 
-def away_segments(events: list[Event], *, horizon: datetime) -> list[AwaySegment]:
-    """Away when activity gap ≥ IDLE_GAP_S; idle starts at last activity."""
+def away_segments(
+    events: list[Event],
+    *,
+    horizon: datetime,
+    gap_s: float = IDLE_GAP_S,
+) -> list[AwaySegment]:
+    """
+    Prefer protocol idle transitions (ADR-002); else degraded activity gaps.
+
+    Protocol: kind=idle with idle true/false and source (wayland-idle|logind).
+    Degraded: silence ≥ gap_s on focus/desktop_snapshot from last activity.
+    """
+    protocol = _protocol_away_segments(events, horizon=horizon, gap_s=gap_s)
+    if protocol:
+        return protocol
+    return _degraded_gap_away_segments(events, horizon=horizon, gap_s=gap_s)
+
+
+def _protocol_away_segments(
+    events: list[Event],
+    *,
+    horizon: datetime,
+    gap_s: float,
+) -> list[AwaySegment]:
+    idle_ev = [e for e in events if e.kind == "idle" and isinstance(e.payload.get("idle"), bool)]
+    if not idle_ev:
+        return []
+    idle_ev.sort(key=lambda e: (e.ts, e.id))
+    out: list[AwaySegment] = []
+    open_start: datetime | None = None
+    open_mode = "wayland-idle"
+    for e in idle_ev:
+        src = str(e.payload.get("source") or "idle")
+        mode = src if src in {"wayland-idle", "logind"} else src
+        if e.payload.get("idle") is True:
+            since_raw = e.payload.get("idle_since")
+            if since_raw:
+                try:
+                    open_start = parse_ts(str(since_raw))
+                except ValueError:
+                    open_start = parse_ts(e.ts) - timedelta(seconds=gap_s)
+            else:
+                open_start = parse_ts(e.ts) - timedelta(seconds=gap_s)
+            open_mode = mode
+        elif e.payload.get("idle") is False and open_start is not None:
+            end = parse_ts(e.ts)
+            if end > open_start:
+                out.append(
+                    AwaySegment(
+                        start=to_z(open_start),
+                        end=to_z(end),
+                        duration_s=(end - open_start).total_seconds(),
+                        mode=open_mode,
+                    )
+                )
+            open_start = None
+    if open_start is not None and horizon > open_start:
+        out.append(
+            AwaySegment(
+                start=to_z(open_start),
+                end=to_z(horizon),
+                duration_s=(horizon - open_start).total_seconds(),
+                mode=open_mode,
+            )
+        )
+    return out
+
+
+def _degraded_gap_away_segments(
+    events: list[Event],
+    *,
+    horizon: datetime,
+    gap_s: float,
+) -> list[AwaySegment]:
+    """Away when activity gap ≥ gap_s; idle starts at last activity."""
     times: list[datetime] = []
     for e in events:
         if e.kind not in _ACTIVITY_KINDS:
@@ -77,7 +147,6 @@ def away_segments(events: list[Event], *, horizon: datetime) -> list[AwaySegment
     if not times:
         return []
     times.sort()
-    # Dedup near-identical stamps
     uniq: list[datetime] = [times[0]]
     for t in times[1:]:
         if (t - uniq[-1]).total_seconds() >= 0.5:
@@ -86,22 +155,23 @@ def away_segments(events: list[Event], *, horizon: datetime) -> list[AwaySegment
     out: list[AwaySegment] = []
     for i in range(len(uniq) - 1):
         gap = (uniq[i + 1] - uniq[i]).total_seconds()
-        if gap >= IDLE_GAP_S:
+        if gap >= gap_s:
             out.append(
                 AwaySegment(
                     start=to_z(uniq[i]),
                     end=to_z(uniq[i + 1]),
                     duration_s=gap,
+                    mode="degraded-gap",
                 )
             )
-    # Trailing silence until horizon
     tail = (horizon - uniq[-1]).total_seconds()
-    if tail >= IDLE_GAP_S:
+    if tail >= gap_s:
         out.append(
             AwaySegment(
                 start=to_z(uniq[-1]),
                 end=to_z(horizon),
                 duration_s=tail,
+                mode="degraded-gap",
             )
         )
     return out
@@ -113,26 +183,22 @@ def focus_segments(
     *,
     horizon: datetime,
 ) -> list[FocusSegment]:
-    """Attribute focus dwell, cutting out degraded-away gaps."""
+    """Attribute focus dwell, cutting out away gaps."""
     if not focus_events:
         return []
-
     collapsed: list[tuple[datetime, str, str, str | None, str | None]] = []
     for e in focus_events:
         app = norm_app(str(e.payload.get("app") or ""))
         title = normalize_title(str(e.payload.get("title") or ""))
-        agent_info = e.payload.get("agent") if isinstance(e.payload.get("agent"), dict) else {}
-        cwd = agent_info.get("cwd") if isinstance(agent_info, dict) else None
-        agent = agent_info.get("agent") if isinstance(agent_info, dict) else None
-        cwd_s = str(cwd) if cwd else None
-        agent_s = str(agent) if agent else None
+        ag = e.payload.get("agent") if isinstance(e.payload.get("agent"), dict) else {}
+        cwd_s = str(ag["cwd"]) if isinstance(ag, dict) and ag.get("cwd") else None
+        agent_s = str(ag["agent"]) if isinstance(ag, dict) and ag.get("agent") else None
         t = parse_ts(e.ts)
-        if collapsed:
+        if collapsed and collapsed[-1][1] == app and collapsed[-1][2] == title:
             prev = collapsed[-1]
-            if prev[1] == app and prev[2] == title:
-                if cwd_s and not prev[3]:
-                    collapsed[-1] = (prev[0], app, title, cwd_s, agent_s or prev[4])
-                continue
+            if cwd_s and not prev[3]:
+                collapsed[-1] = (prev[0], app, title, cwd_s, agent_s or prev[4])
+            continue
         collapsed.append((t, app, title, cwd_s, agent_s))
 
     away_ranges = [(parse_ts(a.start), parse_ts(a.end)) for a in away]
@@ -147,13 +213,8 @@ def focus_segments(
                 continue
             segs.append(
                 FocusSegment(
-                    start=to_z(a0),
-                    end=to_z(a1),
-                    duration_s=dur,
-                    app=app,
-                    title=title,
-                    cwd=cwd,
-                    agent=agent,
+                    start=to_z(a0), end=to_z(a1), duration_s=dur,
+                    app=app, title=title, cwd=cwd, agent=agent,
                 )
             )
     return segs

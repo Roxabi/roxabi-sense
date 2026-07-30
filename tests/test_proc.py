@@ -151,12 +151,7 @@ def test_tmux_multi_session_no_title_match_is_none(monkeypatch) -> None:
 def test_list_tmux_agent_panes_parse(monkeypatch) -> None:
     class R:
         returncode = 0
-        stdout = (
-            "100\tgrok\t/home/m/p\t1\n"
-            "200\tbash\t/tmp\t1\n"
-            "badline\n"
-            "300\tclaude\t/x\t0\n"
-        )
+        stdout = "100\tgrok\t/home/m/p\t1\n200\tbash\t/tmp\t1\nbadline\n300\tclaude\t/x\t0\n"
 
     monkeypatch.setattr(al, "_TMUX", "/usr/bin/tmux")
     monkeypatch.setattr(al.subprocess, "run", lambda *a, **k: R())

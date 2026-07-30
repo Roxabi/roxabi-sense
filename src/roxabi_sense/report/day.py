@@ -76,7 +76,8 @@ def compile_day_recap(
     last_ts = events[-1].ts if events else None
 
     horizon = horizon_dt(end, now)
-    away = away_segments(events, horizon=horizon)
+    gap_s = IDLE_GAP_S
+    away = away_segments(events, horizon=horizon, gap_s=gap_s)
     focus_ev = [e for e in events if e.kind == "focus"]
     segments = focus_segments(focus_ev, away, horizon=horizon)
 
@@ -85,6 +86,17 @@ def compile_day_recap(
         [s for s in segments if s.cwd],
         key=lambda s: _repo_label(s.cwd or ""),
     )
+    modes = {a.mode for a in away}
+    if any(m.startswith("wayland") for m in modes):
+        idle_mode = "wayland-idle"
+    elif "logind" in modes:
+        idle_mode = "logind"
+    elif "degraded-gap" in modes:
+        idle_mode = "degraded-gap"
+    elif away:
+        idle_mode = "mixed"
+    else:
+        idle_mode = "none"
 
     return DayRecap(
         day=day_label,
@@ -98,7 +110,7 @@ def compile_day_recap(
         focus_segments=segments,
         away_segments=away,
         away_total_s=sum(a.duration_s for a in away),
-        idle_mode="degraded-gap" if away else "none",
+        idle_mode=idle_mode,
         time_by_app=time_by_app,
         time_by_repo=time_by_repo,
         top_titles=top_titles(segments, limit=12),
@@ -126,8 +138,7 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
 
     lines.append("")
     lines.append(
-        f"Away (degraded: no focus/desktop ≥{_fmt_dur(IDLE_GAP_S)}, "
-        f"start=last activity, n={len(recap.away_segments)})"
+        f"Away (mode={recap.idle_mode}, gap≥{_fmt_dur(IDLE_GAP_S)}, n={len(recap.away_segments)})"
     )
     if recap.away_segments:
         for a in recap.away_segments[:20]:

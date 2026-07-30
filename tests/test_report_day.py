@@ -140,6 +140,47 @@ def test_compile_day_recap_focus_and_repos(tmp_path: Path) -> None:
     assert "degraded" in text
 
 
+def test_protocol_idle_precedence_over_gap(tmp_path: Path) -> None:
+    """Protocol idle transitions win over degraded focus gaps; tag wayland-idle."""
+    db = tmp_path / "sense.db"
+    with Store(db) as store:
+        store.append(
+            "focus",
+            {"app": "Google Chrome", "title": "Ether"},
+            ts="2026-07-30T16:00:00Z",
+        )
+        store.append(
+            "idle",
+            {
+                "idle": True,
+                "source": "wayland-idle",
+                "threshold_s": 300,
+                "idle_since": "2026-07-30T16:47:00Z",
+            },
+            ts="2026-07-30T16:52:00Z",
+        )
+        store.append(
+            "idle",
+            {"idle": False, "source": "wayland-idle", "threshold_s": 300},
+            ts="2026-07-30T18:32:00Z",
+        )
+        store.append(
+            "focus",
+            {"app": "ghostty", "title": "back"},
+            ts="2026-07-30T18:32:01Z",
+        )
+        recap = compile_day_recap(
+            store,
+            "2026-07-30",
+            now=datetime(2026, 7, 30, 19, 0, 0, tzinfo=UTC),
+        )
+    assert recap.idle_mode == "wayland-idle"
+    assert any(a.mode == "wayland-idle" for a in recap.away_segments)
+    assert recap.away_total_s >= 100 * 60
+    apps = dict(recap.time_by_app)
+    assert apps.get("Google Chrome", 0) < 60 * 60  # not full multi-hour dwell
+
+
 def test_degraded_away_cuts_focus_attribution(tmp_path: Path) -> None:
     """Gap ≥5 min after last activity → away from last activity, not last app."""
     db = tmp_path / "sense.db"
