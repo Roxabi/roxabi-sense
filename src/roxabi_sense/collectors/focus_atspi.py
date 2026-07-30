@@ -1,9 +1,9 @@
 """Focused / visible windows via AT-SPI (Cosmic / Ghostty-friendly).
 
 - Resolve AT-SPI 'Unnamed' → /proc comm (ghostty)
-- Dedup focus on (app, normalized_title) only
-- Desktop snapshot fingerprint uses normalized titles (less spinner noise)
-- Attach agent link (grok session) via process tree when possible
+- Dedup focus on (app, normalized_title, agent_key)
+- Desktop snapshot fingerprint includes agent identity
+- Attach agent link (grok session) via process tree / tmux+title
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from roxabi_sense.store import Store
-from roxabi_sense.util.proc import find_agent_link, load_grok_sessions, resolve_app_name
-from roxabi_sense.util.titles import normalize_title
+from roxabi_sense.util.agent_link import find_agent_link, load_grok_sessions
+from roxabi_sense.util.proc import children_map, resolve_app_name
+from roxabi_sense.util.titles import normalize_title, sanitize_display
 
 KIND = "focus"
 SNAPSHOT = "desktop_snapshot"
 
-# Runs under system interpreter (has PyGObject on Pop/Cosmic).
 _PROBE_SCRIPT = r"""
 import json
 import sys
@@ -106,6 +106,12 @@ class WindowInfo:
     agent: dict[str, Any] | None = None
 
 
+def _agent_key(agent: dict[str, Any] | None) -> str:
+    if not agent:
+        return ""
+    return str(agent.get("session_id") or agent.get("pid") or agent.get("match") or "")
+
+
 class FocusAtspiCollector:
     name = "focus_atspi"
 
@@ -118,7 +124,7 @@ class FocusAtspiCollector:
         self._probe = probe or _default_probe
         self._sessions_loader = sessions_loader or load_grok_sessions
         self._last_desktop_fp: str | None = None
-        self._last_focus_key: tuple[str, str] | None = None
+        self._last_focus_key: tuple[Any, ...] | None = None
 
     def tick(self, store: Store) -> int:
         windows = self._enrich(self._probe())
@@ -127,15 +133,14 @@ class FocusAtspiCollector:
         desktop_fp = _desktop_fingerprint(windows)
         if desktop_fp != self._last_desktop_fp:
             self._last_desktop_fp = desktop_fp
-            payload = _desktop_payload(windows)
-            store.append(SNAPSHOT, payload)
+            store.append(SNAPSHOT, _desktop_payload(windows))
             wrote += 1
 
         active = next((w for w in windows if w.active), None)
         if active is None:
             return wrote
 
-        focus_key = (active.app, active.title)
+        focus_key = (active.app, active.title, active.pid, _agent_key(active.agent))
         if focus_key == self._last_focus_key:
             return wrote
         self._last_focus_key = focus_key
@@ -156,16 +161,18 @@ class FocusAtspiCollector:
 
     def _enrich(self, windows: list[WindowInfo]) -> list[WindowInfo]:
         sessions = self._sessions_loader()
+        tree = children_map()
         out: list[WindowInfo] = []
         for w in windows:
             app = resolve_app_name(w.app, w.pid)
-            raw = w.title
+            raw = sanitize_display(w.title)
             title = normalize_title(raw)
             agent = find_agent_link(
                 w.pid,
                 app=app,
                 title=title,
                 sessions=sessions,
+                tree=tree,
             )
             out.append(
                 WindowInfo(
@@ -182,9 +189,8 @@ class FocusAtspiCollector:
 
 
 def _desktop_fingerprint(windows: list[WindowInfo]) -> str:
-    """Stable set of visible windows (normalized titles, no spinner churn)."""
     rows = sorted(
-        (w.app, w.title, w.active, w.pid)
+        (w.app, w.title, w.active, w.pid, _agent_key(w.agent))
         for w in windows
     )
     return json.dumps(rows, separators=(",", ":"))
@@ -249,9 +255,8 @@ def _default_probe() -> list[WindowInfo]:
         if not isinstance(item, dict):
             continue
         pid_raw = item.get("pid")
-        pid: int | None
         if isinstance(pid_raw, int):
-            pid = pid_raw
+            pid: int | None = pid_raw
         elif isinstance(pid_raw, str) and pid_raw.isdigit():
             pid = int(pid_raw)
         else:
