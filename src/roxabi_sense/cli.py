@@ -160,11 +160,24 @@ def _summarize(kind: str, payload: dict) -> str:
     if kind == "agent_session":
         return f"{payload.get('agent')} {payload.get('cwd') or payload.get('state')}"
     if kind == "focus":
-        return f"{payload.get('app')}: {payload.get('title')}"
+        agent = payload.get("agent") or {}
+        agent_bit = ""
+        if agent.get("agent"):
+            agent_bit = f" → {agent.get('agent')}"
+            if agent.get("cwd"):
+                agent_bit += f"@{agent.get('cwd')}"
+            elif agent.get("session_id"):
+                agent_bit += f"#{str(agent.get('session_id'))[:8]}"
+        return f"{payload.get('app')}: {payload.get('title')}{agent_bit}"
     if kind == "desktop_snapshot":
         focus = payload.get("focus") or {}
         n = len(payload.get("windows") or [])
-        return f"n={n} focus={focus.get('app')}: {focus.get('title')}"
+        agent = (focus.get("agent") or {}) if isinstance(focus, dict) else {}
+        extra = ""
+        if isinstance(agent, dict) and agent.get("agent"):
+            extra = f" [{agent.get('agent')}]"
+        return f"n={n} focus={focus.get('app')}: {focus.get('title')}{extra}"
+
     return json.dumps(payload, ensure_ascii=False)[:100]
 
 
