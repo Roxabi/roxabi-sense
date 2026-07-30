@@ -30,6 +30,7 @@ class SenseConfig:
     idle: bool = True
     mpris: bool = True
     tmux: bool = True
+    focus: bool = True
     process_names: tuple[str, ...] = DEFAULT_PROCESS_NAMES
     machine: str = "laptop"
 
@@ -52,6 +53,7 @@ def load_config(path: Path | None = None) -> SenseConfig:
             "idle",
             "mpris",
             "tmux",
+            "focus",
         ):
             if key in collectors:
                 setattr(cfg, key, bool(collectors[key]))

@@ -8,6 +8,7 @@ from typing import Any
 
 from roxabi_sense.collectors import (
     AgentSessionsCollector,
+    FocusAtspiCollector,
     IdleCollector,
     MprisCollector,
     ProcessPresenceCollector,
@@ -29,6 +30,8 @@ def build_collectors(cfg: SenseConfig) -> list[Any]:
         collectors.append(MprisCollector())
     if cfg.tmux:
         collectors.append(TmuxSessionsCollector())
+    if cfg.focus:
+        collectors.append(FocusAtspiCollector())
     return collectors
 
 

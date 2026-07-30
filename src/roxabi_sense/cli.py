@@ -103,6 +103,8 @@ def cmd_status(db_path: Path) -> int:
         "idle",
         "media_snapshot",
         "tmux_snapshot",
+        "desktop_snapshot",
+        "focus",
     ):
         ev = store.last_by_kind(kind)
         if ev:
@@ -129,6 +131,7 @@ def cmd_day(db_path: Path, *, day: str | None, as_json: bool, limit: int) -> int
         "media_snapshot",
         "tmux_snapshot",
         "focus",
+        "desktop_snapshot",
     }
     filtered = [e for e in events if e.kind in interesting][:limit]
     if as_json:
@@ -179,7 +182,14 @@ def _summarize(kind: str, payload: dict) -> str:
         return f"players={len(players)}"
     if kind == "agent_session":
         return f"{payload.get('agent')} {payload.get('cwd') or payload.get('state')}"
+    if kind == "focus":
+        return f"{payload.get('app')}: {payload.get('title')}"
+    if kind == "desktop_snapshot":
+        focus = payload.get("focus") or {}
+        n = len(payload.get("windows") or [])
+        return f"n={n} focus={focus.get('app')}: {focus.get('title')}"
     return json.dumps(payload, ensure_ascii=False)[:100]
+
 
 
 if __name__ == "__main__":
