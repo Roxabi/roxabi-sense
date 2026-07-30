@@ -36,11 +36,13 @@ No multi-tenant web app. No Podman requirement for V1 laptop path.
 Minimal shapes (illustrative):
 
 ```json
-{"ts":"2026-07-30T10:05:12Z","kind":"focus","app":"google-chrome","title":"…","pid":1234,"idle_s":0}
+{"ts":"2026-07-30T10:05:12Z","kind":"focus","app":"google-chrome","title":"…","pid":1234,"source":"atspi"}
 {"ts":"2026-07-30T10:05:12Z","kind":"agent_session","agent":"grok","session_id":"…","cwd":"/home/…","state":"open"}
 {"ts":"2026-07-30T10:05:12Z","kind":"process","name":"slack","running":true}
-{"ts":"2026-07-30T10:15:00Z","kind":"heartbeat","active":true,"sources":["focus","agent"]}
+{"ts":"2026-07-30T10:10:00Z","kind":"idle","idle":true,"source":"wayland-idle","threshold_s":300,"idle_since":"2026-07-30T10:05:00Z"}
 ```
+
+Daemon **liveness** is `meta.last_tick` (and related meta keys), **not** a periodic `kind=heartbeat` event firehose — see ADR-002.
 
 Store path: `~/.local/share/roxabi-sense/sense.db` (override via env / config).
 
@@ -48,14 +50,16 @@ Store path: `~/.local/share/roxabi-sense/sense.db` (override via env / config).
 
 | Subject (target) | When | Payload intent |
 |---|---|---|
-| `factory.event.host.{machine}.activity` | Periodic or on transition to active | “this machine has recent agent/focus signal” |
-| `factory.event.host.{machine}.stale` | After quiet threshold | “no recent human/agent signal” |
+| `factory.event.host.{machine}.activity` | Transition / hysteresis to non-idle presence | Coarse “recent input/attention signals” + `sources[]` / `confidence` / `degraded` |
+| `factory.event.host.{machine}.stale` | Quiet / offline / degraded idle | Coarse “no recent human input signal” — not an ops SLA |
 
 Rules:
 
 - Envelope compatible with factory `LyraEvent` / `roxabi-contracts` when wired  
 - **No** default stream of every window title to NATS  
-- Sensor never calls Discord or dispatches `factory.jobs.*`
+- Payload must not rely on media-alone or process-alone for confident `activity`  
+- Sensor never calls Discord or dispatches `factory.jobs.*`  
+- Presence mapping uses shared `derive_presence` (ADR-002), not per-surface reimplementation
 
 ## MCP tools (target V1 surface)
 
@@ -69,7 +73,7 @@ Rules:
 ## Collectors priority
 
 1. **Agent sessions** — parse `~/.grok/active_sessions.json`, session dirs, `~/.claude/history.jsonl` / project JSONL mtimes (read-only). Highest ROI, zero OS integration pain.  
-2. **Idle** — compositor / screensaver / input idle if available.  
+2. **Idle** — Wayland `ext-idle-notify` (primary on Cosmic); logind secondary; see ADR-002.  
 3. **Focus** — AT-SPI or Cosmic/Wayland path (hardest; isolate behind interface).  
 4. **Process presence** — `pgrep`-class checks for configured app names.  
 

@@ -1,8 +1,10 @@
-# systemd --user unit template (install path TBD via `sense install-service`)
+# systemd --user unit template (install via `sense install-service` when implemented)
 #
 #   systemctl --user enable --now roxabi-sense.service
 #
-# Runs in the graphical user session so focus/AT-SPI collectors can work later.
+# Bind to graphical session so Wayland idle_watch + AT-SPI see WAYLAND_DISPLAY.
+# After login, ensure session env is imported if needed:
+#   systemctl --user import-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_SESSION_TYPE
 
 [Unit]
 Description=roxabi-sense workstation attention journal
@@ -12,9 +14,9 @@ PartOf=graphical-session.target
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/sense daemon
-Restart=on-failure
+Restart=always
 RestartSec=5
 # Environment=SENSE_CONFIG=%h/.config/roxabi-sense/config.toml
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

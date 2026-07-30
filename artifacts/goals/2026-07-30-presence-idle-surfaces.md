@@ -2,8 +2,10 @@
 title: "Goal — Presence, idle, surfaces (phases 1→2→3)"
 status: active
 date: 2026-07-30
+updated: 2026-07-30
 repo: roxabi-sense
 axis: collectors (ADR-001)
+review: "Approve with comments — panel 2026-07-30; goal patched"
 ---
 
 # Goal
@@ -16,159 +18,207 @@ Ship an honest **attention presence** pipeline on Cosmic/Linux:
 
 An operator can answer, locally:
 
-1. **What was I doing today?** — compiled day recap (not raw firehose)
-2. **Am I active / idle / offline right now?** — honest status from real signals
-3. **Can an agent / factory read the same truth thinly?** — MCP local, NATS coarse later
+1. **What was I doing today?** — compiled day recap (focus, away, agent sessions if in DB)
+2. **Am I active / idle / offline right now?** — status with **authority + confidence** (not a bare enum)
+3. **Can an agent / factory read the same truth thinly?** — MCP local (redacted), NATS coarse later
 
 …using **facts only** in collectors, **one SQLite logger**, **thin surfaces**.
 
-## Architecture (fixed)
+---
+
+## Target pipeline (not phase backlog)
+
+Existing collectors already write process/mpris/agents/focus. **This goal does not re-scope polishing them** except as readers for recap/status.
+
+| Source | Capteur | Logger | Phase of *this* goal |
+|--------|---------|--------|----------------------|
+| clavier/souris | `idle_watch` (Wayland) | `idle` transitions | **2b** |
+| logind IdleHint | `idle` collector (existing) | `idle` (demoted) | **2b** demote |
+| fenêtre active | focus AT-SPI (existing) | `focus` | **1** read / **2** dwell |
+| Spotify/… | mpris (existing) | `media_snapshot` | **2b** optional tag only |
+| ~/.grok / claude | agent_sessions (existing) | snapshots | **1** recap section if present |
+| process names | process_presence (existing) | snapshots | read-only status annotation |
+| daemon vivant | **coordinator meta** (not peer collector) | `meta.last_tick` | **2a** |
 
 ```
-SOURCE (OS)          CAPTEUR (collectors/)       LOGGER (store)         VUE (report/cli/mcp/nats)
-─────────────────    ──────────────────────      ───────────────        ────────────────────────
-clavier/souris   →   idle_watch (Wayland)    →   events idle        →   status / recap
-fenêtre active   →   focus AT-SPI            →   events focus       →   recap dwell
-Spotify/…        →   mpris                   →   media_snapshot     →   recap exception
-~/.grok / claude →   agent_sessions          →   agent snapshots    →   recap sessions
-process names    →   process_presence        →   process_snapshot   →   status “apps present”
-daemon vivant    →   coordinator meta*       →   meta last_tick     →   status offline?
-
-* not a peer “fact collector” — daemon coordinator (ADR cross-collector debt)
+SOURCE → CAPTEUR (collectors/) → LOGGER (store) → VUE (report/ + thin CLI/MCP/NATS)
 ```
 
-### Hard rules
+Cross-collector SM / liveness = **daemon meta + pure `derive_presence()` in report/store** — never inside a collector, never CLI-only private copy.
+
+---
+
+## Hard rules
 
 - Collectors = **faits purs** (no Discord, jobs, Sentinelle policy)
-- No OCR / screenshots / keylogging
-- Heartbeat **not** a firehose in `events` (meta liveness or transition-only)
-- State machine `active|idle|offline` = **coordinator + shared report/store rules**, not per-collector
-- NATS = `activity` / `stale` only, no title firehose
-- MCP defaults to **redacted/coarse** when shipped
-- Idle authority runtime: **ext-idle-notify** > logind > degraded gap (compile-only fallback)
+- No OCR / screenshots / keylogging / a11y tree text / evdev keylogging
+- Focus payload **allowlist**: `app`, `title` (optional), `pid`, `source`, `agent` link — no tree walk
+- Heartbeat **not** a firehose in `events` (meta liveness only, or transition-only `presence` if ever needed)
+- State machine `active|idle|offline` = **one pure function** `derive_presence(...)` in `report/` or `store/`; CLI/MCP/NATS only format
+- Media / process = **annotations**, never sole drivers of `active` for SM or NATS
+- NATS = `activity` / `stale` only; payload must include `sources[]`, `confidence`, `degraded` — **not** an operator-availability SLA
+- MCP/CLI JSON default = **coarse** redaction; `full` = operator config file only (tools ignore client arg escalation)
+- Idle **write** authority runtime: **one writer** — Wayland if watch healthy, else logind if enabled, else none (recap uses degraded gap)
+- Idle **read** precedence for recap: protocol idle events > degraded gap compile
+- Single config threshold: `collectors.idle_threshold_s` default **300** (watch + degraded gap)
+
+---
+
+## Operator state contract
+
+| State | Dominant signal | Meaning |
+|-------|-----------------|--------|
+| `active` | input not idle (or no idle fact yet + recent focus *with* healthy watch not claiming idle) | Likely human input / attention signals |
+| `idle` | input idle (Wayland) or degraded gap when no protocol | No input for ≥ threshold; `idle_since` = last activity evidence |
+| `offline` | daemon liveness stale (`last_tick` age > offline threshold) | Sensor not running / not updating — **not** the same as user AFK |
+| *(flag)* `degraded` | watch dead, no graphical session, logind-only, gap fallback | Always pair with `authority` + `confidence` — not a 4th enum value if possible |
+
+**Status payload (stable keys for agents)** — always include:
+
+```text
+state, authority, confidence, degraded,
+last_tick_age_s, idle_watch (ready|dead|restarting|n/a),
+idle_since?, threshold_s, session_bound (bool)
+```
+
+Examples verify: leave desk 6+ min · kill daemon · kill watch only · no `WAYLAND_DISPLAY` (session_bound=false).
 
 ---
 
 ## Phase 1 — Logger + baseline recap (foundation)
 
-**Intent:** Land the day compiler and degraded away; freeze Source→Capteur→Logger mental model.
-
-### Deliverables
+**Intent:** Land day compiler + degraded away; freeze mental model.
 
 | ID | Deliverable | Done when |
 |----|-------------|-----------|
-| 1.1 | `report/` day recap (`compile_day_recap`, `format_day_recap`) | `sense recap` works on live DB |
-| 1.2 | CLI `sense recap [--date] [--json]` | help + tests green |
-| 1.3 | Degraded away: gap ≥ 5 min on `focus`+`desktop_snapshot`; start = last activity | recap shows Away section; focus dwell cut |
-| 1.4 | Tests for recap + gap semantics | pytest green |
-| 1.5 | Ship baseline: commit + PR if not already on main | CI green; `uv tool install -e .` |
+| 1.1 | `report/` day recap | `sense recap` on live DB |
+| 1.2 | CLI `sense recap [--date] [--json]` | help + tests |
+| 1.3 | Degraded away ≥ 5 min (`focus`+`desktop_snapshot`); start = last activity | Away section; dwell cut |
+| 1.4 | Tests recap + gap | pytest green |
+| 1.5 | Ship baseline (commit/PR) | CI green; `uv tool install -e .` |
+| 1.6 | Recap shows agent sessions section when snapshots exist | visible in recap output |
 
 ### Non-goals (phase 1)
 
-- Wayland idle protocol
-- MCP / NATS
-- Heartbeat rows
+- Wayland idle, MCP/NATS, heartbeat rows
 
 ### Verify
 
 ```bash
 uv run pytest -q
-sense recap | head -40   # Away + Focus time present
+sense recap | head -50   # Away + Focus + sessions if any
 ```
 
-**Status note:** Code largely exists uncommitted on workspace (`report/`, `cli.py`, tests) — phase 1 = **merge & reinstall**, not redesign.
+**Note:** Phase 1 code landed in `dcbfdc6` (main local); still need push/PR + reinstall as needed.
 
 ---
 
-## Phase 2 — Capteur idle + status honnête
+## Phase 2a — Liveness + status skeleton (demoable without Wayland idle)
 
-**Intent:** Real input idle on Cosmic + daemon liveness without store bloat.
-
-### Deliverables
+**Intent:** Honest daemon offline vs “unknown presence”; shared derive function early (anti axis-trap).
 
 | ID | Deliverable | Done when |
 |----|-------------|-----------|
-| 2.0 | ADR short `presence/idle` (authority, SM placement, no heartbeat firehose) | ADR accepted under `docs/architecture/adr/` |
-| 2.1 | Meta liveness: `last_tick` / presence fields; **no** 15–30s event spam | `sense status` shows age; DB growth ~flat vs today |
-| 2.2 | `idle_watch` subprocess (ext-idle-notify, prefer `get_input_idle_notification` 300s) | transitions `idle` enter/leave with `source`, `idle_since=last_activity` |
-| 2.3 | Daemon: start/stop/respawn watch; crash ≠ kill agents; fallback degraded flag | kill watch → log + degrade; restart recovers |
-| 2.4 | Idle authority: Wayland primary; logind demoted/config | dual-write not conflicting in recap |
-| 2.5 | `sense status`: `state` active\|idle\|offline, heartbeat age, watch health | human-readable + stable keys for agents later |
-| 2.6 | Recap precedence: protocol idle > degraded gap; show mode/confidence | away segments tagged `wayland-idle` \| `degraded-gap` |
-| 2.7 | Unit systemd: graphical-session + Wayland env docs | documented; idle_watch has display after login |
-| 2.8 | Tests: idle_since bias, priority sources, watch death | pytest green |
+| 2.0 | **ADR-002 presence/idle** accepted | file under `docs/architecture/adr/` |
+| 2.1 | Meta liveness only (`last_tick` / presence meta fields); **no** 15–30s event spam | status shows age; no `kind=heartbeat` rows |
+| 2.1b | `derive_presence()` in `report/` or `store/`; CLI formats only | single function; unit tests |
+| 2.5a | `sense status`: state + authority + confidence + last_tick_age + keys above (may be degraded until 2b) | human + stable keys |
+| 2.7a | `sense install-service` real (unit path, daemon-reload) | not stub exit 2 |
+| 2.7b | Unit: `WantedBy=graphical-session.target` + Wayland env docs | login → env present |
+| 2.8a | Tests: offline when last_tick stale | pytest |
 
-### Optional in phase 2 (if cheap)
+### Non-goals (2a)
 
-| ID | Deliverable |
-|----|-------------|
-| 2.9 | Recap: media Playing soft-exception (tag only; not sole NATS activity) |
+- idle_watch Wayland
+- MCP/NATS
 
-### Non-goals (phase 2)
+### Verify
 
-- MCP / NATS publish
-- cosmic-toplevel (phase later / F)
-- Retention prune (unless bloat forces — prefer config stub)
+```bash
+sense status          # last_tick_age_s, state offline if daemon stopped
+systemctl --user stop roxabi-sense.service && sense status   # offline
+```
+
+---
+
+## Phase 2b — Capteur idle Wayland + recap precedence
+
+**Intent:** Real input idle on Cosmic without lock.
+
+| ID | Deliverable | Done when |
+|----|-------------|-----------|
+| 2.2 | `idle_watch` subprocess (`ext-idle-notify`, prefer `get_input_idle_notification`, threshold from config) | transitions only; `source`, `idle_since=last_activity` (not event_ts alone) |
+| 2.3 | Respawn watch (backoff); crash ≠ kill agents; meta `idle_watch=dead` | kill watch → degrade; restart recovers |
+| 2.4 | **Write policy:** Wayland writer when healthy; logind demoted/off | one authoritative writer; recap not dual-conflicting |
+| 2.6 | Recap: protocol idle > degraded gap; tags `wayland-idle` \| `degraded-gap` + mode/confidence | away not Chrome-eaten when protocol works |
+| 2.8b | Tests: idle_since bias, priority sources, watch death | pytest |
+| 2.9 | Optional: media Playing as **annotation only** (never sole `active`/NATS activity) | tagged in recap if done |
+
+### Non-goals (2b)
+
+- MCP/NATS, cosmic-toplevel, retention prune (config stub OK)
 
 ### Verify
 
 ```bash
 # leave desk 6+ min without lock
-sense status   # state=idle, idle_since ≈ last input
-sense recap    # away measured, not Chrome-eaten
-# kill idle watch process
-sense status   # degraded / offline path honest
+sense status   # idle, idle_since ≈ last input, authority=wayland-idle
+sense recap    # away measured
+# kill idle watch
+sense status   # degraded / not confident active
 ```
 
 ---
 
-## Phase 3 — Surfaces that only read the logger
-
-**Intent:** Agents and factory consume the **same** store; no re-collection.
-
-### Deliverables
+## Phase 3a — MCP (local agents; factory down OK)
 
 | ID | Deliverable | Done when |
 |----|-------------|-----------|
-| 3.1 | Shared query layer for “active now” / day slice (store or report, not MCP-private) | one function, CLI + MCP call it |
-| 3.2 | MCP stdio tools (minimal): `sense_status`, `active_now`, `what_was_i_doing` | tools return redacted-by-default payloads |
-| 3.3 | MCP redaction levels: `coarse` default / `standard` / `full` opt-in | no `title_raw` / media track on coarse |
-| 3.4 | NATS opt-in: single daemon publisher `activity` \| `stale` | envelope versioned, **no titles**, multi-source hysteresis |
-| 3.5 | Config knobs: `mcp.*`, `nats.*`, `collectors.idle_backend`, docs | install + README |
-| 3.6 | Tests: no title in NATS fixture; MCP coarse strips titles | pytest green |
+| 3.1 | Shared queries already used by CLI (extend if needed) | MCP calls **same** `derive_presence` / day slice |
+| 3.2 | MCP tools: `sense_status`, `active_now`, `what_was_i_doing` | redacted-by-default |
+| 3.3 | Redaction: coarse default / standard / full via **config file only** | client cannot escalate to full via tool args |
+| 3.6a | Tests: coarse strips titles / title_raw / media tracks | pytest |
 
-### Non-goals (phase 3)
+### Non-goals (3a)
 
-- Sentinelle policy / Discord
-- Screenpipe-class signals
-- Per-collector NATS publish
+- NATS, Sentinelle, Discord
+
+---
+
+## Phase 3b — NATS opt-in (factory)
+
+| ID | Deliverable | Done when |
+|----|-------------|-----------|
+| 3.4 | Single daemon publisher `activity` \| `stale` | envelope versioned; **no titles**; `sources[]`, `confidence`, `degraded` required; multi-source hysteresis; media-alone ≠ activity |
+| 3.5 | Config `nats.*`, `machine` id; docs | off by default |
+| 3.6b | Tests: no title in NATS fixture; media-only not activity | pytest |
+
+### Non-goals (3b)
+
+- Per-collector NATS, policy Discord/jobs
 
 ### Verify
 
 ```bash
-# MCP
-echo '{"jsonrpc":"2.0",...}' | sense mcp   # or documented client smoke
 # NATS off by default
-# NATS on: only activity/stale subjects; payload schema check
+# NATS on: subjects host.{machine}.activity|stale only; schema check
 ```
 
 ---
 
-## Work order (implementation)
+## Work order
 
 ```text
-Phase 1  ship recap baseline ─────────────────────────────┐
-Phase 2.0 ADR presence/idle ──────────────────────────────┤
-Phase 2.1 meta liveness + status fields ──────────────────┤  (can PR-stack)
-Phase 2.2–2.4 idle_watch + authority + recap precedence ──┤
-Phase 2.5–2.8 status UX + systemd + tests ────────────────┤
-Phase 2.9 media soft-exception (optional) ────────────────┤
-Phase 3.1 shared queries ─────────────────────────────────┤
-Phase 3.2–3.3 MCP ────────────────────────────────────────┤
-Phase 3.4–3.6 NATS + config + tests ──────────────────────┘
+Phase 1   ship recap baseline (done locally dcbfdc6) ──┐
+Phase 2.0 ADR-002 accepted ────────────────────────────┤
+Phase 2a  meta + derive_presence + status + install ───┤
+Phase 2b  idle_watch + write authority + recap tags ──┤
+Phase 3a  MCP redacted ────────────────────────────────┤
+Phase 3b  NATS coarse ─────────────────────────────────┘
 ```
 
-Prefer **PR stack** or sequential PRs per phase; do not merge MCP before 2.x idle/status.
+Do **not** merge MCP before 2b idle/status honest.  
+Do **not** implement SM only in `cli.py` (extract for 2.5a).
 
 ---
 
@@ -176,33 +226,35 @@ Prefer **PR stack** or sequential PRs per phase; do not merge MCP before 2.x idl
 
 | Metric | Target |
 |--------|--------|
-| Recap away vs lived absences | No multi-hour “Chrome” blocks when away |
-| Status idle without lock screen | Works on Cosmic without LockedHint |
-| Store growth | No permanent 2–4 events/min heartbeat |
+| Recap away vs absences | No multi-hour “Chrome” when away + protocol idle works |
+| Status idle without lock | Cosmic without LockedHint |
+| Store growth | No permanent 2–4 events/min heartbeat; idle = transitions only |
 | Surfaces | MCP/NATS do not reimplement collectors |
-| Privacy | NATS never ships window titles by default |
+| Privacy NATS | Never ships window titles |
+| Privacy local | Coarse default CLI/MCP; no title_raw/media/cwd on coarse |
+| Honesty | Status/NATS always carry confidence/degraded/sources where applicable |
 
 ## Failure (abort / reframe)
 
-- Implementing heartbeat firehose “because docs said heartbeat”
-- Putting composite idle or SM inside a collector
-- MCP/NATS shipping full titles as default
-- Scope creep to OCR / a11y text / evdev keylogging
+- Heartbeat firehose in `events` “because docs said so”
+- SM or composite idle inside a collector
+- MCP/NATS full titles by default
+- Scope creep OCR / a11y text content / evdev
+- Dual-write idle without authority filter
 
-## Panel constraints absorbed
+## Panel constraints (absorbed 2026-07-30)
 
-Product / Architect / DevOps / Axial / Adversarial (2026-07-30):
-
-- Heartbeat = coordinator/meta, not peer collector
-- SM = shared derived layer
-- One idle authority + degraded fallback
-- systemd graphical-session + Wayland env
-- MCP redaction; NATS coarse multi-source
-- Allowlist signals; mark inference confidence
+- Heartbeat = coordinator/meta  
+- SM = shared pure derive  
+- One idle **write** authority + degraded read fallback  
+- systemd graphical-session + Wayland env  
+- MCP redaction config-bound; NATS coarse multi-source + confidence  
+- Allowlist focus fields; mark inference confidence  
+- install-service real; split 2a/2b and 3a/3b  
 
 ## References
 
 - `docs/PURPOSE.md`
 - `docs/architecture/adr/001-axis-of-decomposition.md`
-- Session design: Source → Capteur → Logger
-- Existing: `src/roxabi_sense/report/`, `collectors/focus_watch.py` pattern
+- `docs/architecture/adr/002-presence-and-idle.md` (phase 2.0)
+- `src/roxabi_sense/report/`, `collectors/focus_watch.py`
