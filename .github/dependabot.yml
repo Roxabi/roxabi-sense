@@ -27,7 +27,5 @@ updates:
       - dependencies
       - ci
     cooldown:
+      # github-actions rejects semver-*-days (doctor: entire file fails parse)
       default-days: 3
-      semver-major-days: 3
-      semver-minor-days: 3
-      semver-patch-days: 3

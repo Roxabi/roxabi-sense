@@ -52,7 +52,7 @@ Format: `<type>(<scope>): <desc>`
 Types: feat|fix|refactor|docs|style|test|chore|ci|perf
 Never push without request. Never force/hard/amend. Hook fail → fix + NEW commit.
 
-Release: **trunk on `main`** — tags `roxabi-sense/vX.Y.Z` via Release Please. No staging-train.
+Release: **`main` only** (no staging branch) — tags `roxabi-sense/vX.Y.Z` via Release Please. Not factory promote / auto-release.
 
 ### 5. Artifact Model
 

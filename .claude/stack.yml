@@ -46,8 +46,11 @@ deploy:
   platform: none                   # systemd --user on laptop/M₂; not CF Pages / Quadlet hub
   secrets_cmd: ""
 
+# Branch train is main-only (no staging). Automation = Release Please (not
+# auto-release.yml — that needs vendored promote scripts under plugins/).
+# release.model must NOT be `trunk` while release-please.yml exists (doctor N10/N11).
 release:
-  model: trunk                     # small tool — tags at main, no staging-train promote
+  model: staging-train             # doctor-inert default; do not enable auto-release.yml
   class: NONE
   component: roxabi-sense          # tags: roxabi-sense/vX.Y.Z
   version_files: ["pyproject.toml"]
