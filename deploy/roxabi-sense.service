@@ -1,0 +1,20 @@
+# systemd --user unit template (install path TBD via `sense install-service`)
+#
+#   systemctl --user enable --now roxabi-sense.service
+#
+# Runs in the graphical user session so focus/AT-SPI collectors can work later.
+
+[Unit]
+Description=roxabi-sense workstation attention journal
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/sense daemon
+Restart=on-failure
+RestartSec=5
+# Environment=SENSE_CONFIG=%h/.config/roxabi-sense/config.toml
+
+[Install]
+WantedBy=default.target
