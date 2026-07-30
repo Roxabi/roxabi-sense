@@ -9,6 +9,7 @@ from typing import Any
 from roxabi_sense.store import Store
 
 KIND = "agent_session"
+SNAPSHOT = "agent_sessions_snapshot"
 
 
 class AgentSessionsCollector:
@@ -26,23 +27,22 @@ class AgentSessionsCollector:
 
     def tick(self, store: Store) -> int:
         sessions = self._collect_sessions()
-        fingerprint = json.dumps(sessions, sort_keys=True, separators=(",", ":"))
+        # Fingerprint stable fields only — not Claude mtime (churns while Claude runs).
+        fingerprint = json.dumps(self._stable(sessions), sort_keys=True, separators=(",", ":"))
         if fingerprint == self._last_fingerprint:
             return 0
         self._last_fingerprint = fingerprint
-        n = 0
+        # Snapshot-only: full list in one row (avoids N+1 per session).
+        store.append(SNAPSHOT, {"count": len(sessions), "sessions": sessions})
+        return 1
+
+    @staticmethod
+    def _stable(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for s in sessions:
-            store.append(KIND, s)
-            n += 1
-        # Also one rollup for cheap status
-        store.append(
-            "agent_sessions_snapshot",
-            {"count": len(sessions), "sessions": sessions},
-        )
-        last = store.last_event()
-        if last is not None:
-            store.set_meta("last_agent_sessions", last.ts)
-        return n + 1
+            item = {k: v for k, v in s.items() if k != "history_mtime"}
+            out.append(item)
+        return out
 
     def _collect_sessions(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
