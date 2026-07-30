@@ -8,7 +8,6 @@ from roxabi_sense.store import Store
 
 
 def test_focus_dedup_and_normalize(tmp_path: Path, monkeypatch) -> None:
-    # same logical focus, spinner title changes → only 1 focus event
     calls = {"n": 0}
 
     def probe() -> list[WindowInfo]:
@@ -37,7 +36,7 @@ def test_focus_dedup_and_normalize(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "roxabi_sense.collectors.focus_atspi.find_agent_link",
-        lambda pid, app=None, title=None, sessions=None: {
+        lambda pid, app=None, title=None, sessions=None, tree=None: {
             "agent": "grok",
             "session_id": "sid-1",
             "cwd": "/tmp/p",
@@ -47,17 +46,115 @@ def test_focus_dedup_and_normalize(tmp_path: Path, monkeypatch) -> None:
         if pid == 7280
         else None,
     )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
+    )
 
     store = Store(tmp_path / "s.db")
     c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
-    assert c.tick(store) == 2  # desktop + focus
-    assert c.tick(store) == 0  # spinner change only → no write
+    assert c.tick(store) == 2
+    assert c.tick(store) == 0
     focus = store.last_by_kind("focus")
     assert focus is not None
     assert focus.payload["app"] == "ghostty"
     assert focus.payload["title"] == "My Task - grok"
+    assert "Thinking" in (focus.payload.get("title_raw") or "")
     assert focus.payload["agent"]["session_id"] == "sid-1"
     assert store.count() == 2
+    store.close()
+
+
+def test_agent_attach_updates_focus_key(tmp_path: Path, monkeypatch) -> None:
+    """Stable title but agent appears later → new focus row."""
+    state: dict = {"agent": None}
+
+    def probe() -> list[WindowInfo]:
+        return [
+            WindowInfo(
+                app="ghostty",
+                title="My Task - grok",
+                active=True,
+                role="frame",
+                pid=1,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        lambda app, pid: app,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        lambda pid, app=None, title=None, sessions=None, tree=None: state["agent"],
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
+    )
+    store = Store(tmp_path / "s.db")
+    c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
+    assert c.tick(store) == 2
+    state["agent"] = {
+        "agent": "grok",
+        "session_id": "new",
+        "cwd": "/p",
+        "pid": 9,
+        "match": "tmux",
+    }
+    assert c.tick(store) >= 1  # focus and/or desktop rewrite
+    focus = store.last_by_kind("focus")
+    assert focus is not None
+    assert focus.payload["agent"]["session_id"] == "new"
+    store.close()
+
+
+def test_desktop_only_change_no_new_focus(tmp_path: Path, monkeypatch) -> None:
+    state = {
+        "bg_title": "chan-a",
+    }
+
+    def probe() -> list[WindowInfo]:
+        return [
+            WindowInfo(
+                app="ghostty",
+                title="A - grok",
+                active=True,
+                role="frame",
+                pid=1,
+            ),
+            WindowInfo(
+                app="slack",
+                title=state["bg_title"],
+                active=False,
+                role="frame",
+                pid=2,
+            ),
+        ]
+
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        lambda app, pid: app,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
+    )
+    store = Store(tmp_path / "s.db")
+    c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
+    assert c.tick(store) == 2
+    focus_n = store.count()  # 2
+    state["bg_title"] = "chan-b"
+    n = c.tick(store)
+    assert n == 1  # desktop only
+    assert store.count() == focus_n + 1
+    focus = store.last_by_kind("focus")
+    assert focus is not None
+    assert focus.payload["title"] == "A - grok"
     store.close()
 
 
@@ -81,14 +178,18 @@ def test_focus_writes_on_app_change(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "roxabi_sense.collectors.focus_atspi.find_agent_link",
-        lambda pid, app=None, title=None, sessions=None: None,
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
     )
     store = Store(tmp_path / "s.db")
     c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
     assert c.tick(store) == 2
     state["app"] = "slack"
     state["title"] = "chan"
-    assert c.tick(store) == 2  # desktop + new focus
+    assert c.tick(store) == 2
     focus = store.last_by_kind("focus")
     assert focus is not None
     assert focus.payload["app"] == "slack"
