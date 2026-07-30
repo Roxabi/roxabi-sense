@@ -1,7 +1,8 @@
-"""Foreground collector loop."""
+"""Daemon: AT-SPI focus event-driven + polled collectors for the rest."""
 
 from __future__ import annotations
 
+import queue
 import signal
 import time
 from typing import Any
@@ -14,11 +15,13 @@ from roxabi_sense.collectors import (
     ProcessPresenceCollector,
     TmuxSessionsCollector,
 )
+from roxabi_sense.collectors.focus_watch import FocusAtspiWatch
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.store import Store
 
 
-def build_collectors(cfg: SenseConfig) -> list[Any]:
+def build_poll_collectors(cfg: SenseConfig) -> list[Any]:
+    """Collectors that stay on the poll loop (not focus)."""
     collectors: list[Any] = []
     if cfg.agent_sessions:
         collectors.append(AgentSessionsCollector())
@@ -30,9 +33,15 @@ def build_collectors(cfg: SenseConfig) -> list[Any]:
         collectors.append(MprisCollector())
     if cfg.tmux:
         collectors.append(TmuxSessionsCollector())
-    if cfg.focus:
-        collectors.append(FocusAtspiCollector())
     return collectors
+
+
+def build_collectors(cfg: SenseConfig) -> list[Any]:
+    """All collectors including focus (for `sense once`)."""
+    cols = build_poll_collectors(cfg)
+    if cfg.focus:
+        cols.append(FocusAtspiCollector())
+    return cols
 
 
 def tick_all(collectors: list[Any], store: Store) -> int:
@@ -53,8 +62,11 @@ def _utc_stamp() -> str:
 
 def run_daemon(cfg: SenseConfig) -> int:
     store = Store(cfg.db_path)
-    collectors = build_collectors(cfg)
+    poll_collectors = build_poll_collectors(cfg)
+    focus: FocusAtspiCollector | None = FocusAtspiCollector() if cfg.focus else None
     stop = False
+    focus_q: queue.Queue[str] = queue.Queue()
+    watch: FocusAtspiWatch | None = None
 
     def _stop(*_args: object) -> None:
         nonlocal stop
@@ -65,23 +77,105 @@ def run_daemon(cfg: SenseConfig) -> int:
 
     store.set_meta("daemon_started", _utc_stamp())
     store.set_meta("machine", cfg.machine)
+    mode = "events+backup" if (focus and cfg.focus_events) else "poll"
     print(
         f"sense daemon: db={cfg.db_path} poll={cfg.poll_seconds}s "
-        f"collectors={[c.name for c in collectors]}",
+        f"focus={mode} backup={cfg.focus_backup_seconds}s "
+        f"poll_collectors={[c.name for c in poll_collectors]}",
         flush=True,
     )
 
-    while not stop:
-        wrote = tick_all(collectors, store)
+    if focus is not None and cfg.focus_events:
+        def _on_focus_event(_msg: dict[str, Any]) -> None:
+            focus_q.put("focus")
+
+        watch = FocusAtspiWatch(on_event=_on_focus_event)
+        try:
+            watch.start()
+        except Exception as exc:  # noqa: BLE001
+            print(f"sense focus-watch failed to start: {exc} — focus stays poll-only", flush=True)
+            watch = None
+
+    next_poll = time.monotonic()
+    next_focus_backup = time.monotonic() + cfg.focus_backup_seconds
+
+    try:
+        # Initial full sample (focus + others)
+        wrote = tick_all(
+            [*poll_collectors, *([focus] if focus is not None else [])],
+            store,
+        )
         store.set_meta("last_tick", _utc_stamp())
         if wrote:
-            print(f"sense tick: +{wrote} events (total={store.count()})", flush=True)
-        deadline = time.monotonic() + cfg.poll_seconds
-        while not stop and time.monotonic() < deadline:
-            time.sleep(0.2)
+            print(f"sense tick (boot): +{wrote} events (total={store.count()})", flush=True)
 
-    store.close()
-    print("sense daemon: stopped", flush=True)
+        while not stop:
+            now = time.monotonic()
+            wait = max(0.05, min(next_poll, next_focus_backup) - now)
+
+            # Wake on focus event or timeout
+            try:
+                focus_q.get(timeout=wait)
+                # Drain burst; one tick is enough (collector dedups)
+                while True:
+                    try:
+                        focus_q.get_nowait()
+                    except queue.Empty:
+                        break
+                if focus is not None:
+                    n = 0
+                    try:
+                        n = int(focus.tick(store) or 0)
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"sense collector error [focus_atspi/event]: {exc}", flush=True)
+                    store.set_meta("last_tick", _utc_stamp())
+                    store.set_meta("last_focus_source", "event")
+                    if n:
+                        print(
+                            f"sense focus-event: +{n} events (total={store.count()})",
+                            flush=True,
+                        )
+            except queue.Empty:
+                pass
+
+            if stop:
+                break
+
+            now = time.monotonic()
+            if now >= next_poll:
+                wrote = tick_all(poll_collectors, store)
+                store.set_meta("last_tick", _utc_stamp())
+                if wrote:
+                    print(f"sense tick (poll): +{wrote} events (total={store.count()})", flush=True)
+                next_poll = now + cfg.poll_seconds
+
+            if focus is not None and now >= next_focus_backup:
+                # Safety net if AT-SPI events miss a transition
+                n = 0
+                try:
+                    n = int(focus.tick(store) or 0)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"sense collector error [focus_atspi/backup]: {exc}", flush=True)
+                store.set_meta("last_tick", _utc_stamp())
+                if n:
+                    store.set_meta("last_focus_source", "backup")
+                    print(
+                        f"sense focus-backup: +{n} events (total={store.count()})",
+                        flush=True,
+                    )
+                next_focus_backup = now + cfg.focus_backup_seconds
+
+            # If event watch died, fall back to poll cadence for focus
+            if focus is not None and watch is not None and not watch.running:
+                print("sense focus-watch: exited — focus uses backup poll only", flush=True)
+                watch = None
+                next_focus_backup = now  # ASAP
+
+    finally:
+        if watch is not None:
+            watch.stop()
+        store.close()
+        print("sense daemon: stopped", flush=True)
     return 0
 
 

@@ -25,6 +25,9 @@ DEFAULT_PROCESS_NAMES = (
 class SenseConfig:
     poll_seconds: float = 5.0
     db_path: Path = field(default_factory=default_db_path)
+    # Focus: AT-SPI EventListener (primary) + slow backup poll
+    focus_events: bool = True
+    focus_backup_seconds: float = 30.0
     agent_sessions: bool = True
     process_presence: bool = True
     idle: bool = True
@@ -47,6 +50,10 @@ def load_config(path: Path | None = None) -> SenseConfig:
             cfg.poll_seconds = float(daemon["poll_seconds"])
         if "db_path" in daemon:
             cfg.db_path = Path(str(daemon["db_path"]))
+        if "focus_events" in daemon:
+            cfg.focus_events = bool(daemon["focus_events"])
+        if "focus_backup_seconds" in daemon:
+            cfg.focus_backup_seconds = float(daemon["focus_backup_seconds"])
         for key in (
             "agent_sessions",
             "process_presence",

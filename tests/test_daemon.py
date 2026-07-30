@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from roxabi_sense.config import SenseConfig
-from roxabi_sense.daemon import build_collectors, collect_once, tick_all
+from roxabi_sense.daemon import build_collectors, build_poll_collectors, collect_once, tick_all
 from roxabi_sense.store import Store
 
 
@@ -61,3 +61,18 @@ def test_build_collectors_flags() -> None:
     cols = build_collectors(cfg)
     assert len(cols) == 1
     assert cols[0].name == "agent_sessions"
+
+
+def test_poll_collectors_exclude_focus() -> None:
+    cfg = SenseConfig(
+        agent_sessions=True,
+        process_presence=False,
+        idle=False,
+        mpris=False,
+        tmux=False,
+        focus=True,
+    )
+    poll = build_poll_collectors(cfg)
+    assert all(c.name != "focus_atspi" for c in poll)
+    all_c = build_collectors(cfg)
+    assert any(c.name == "focus_atspi" for c in all_c)
