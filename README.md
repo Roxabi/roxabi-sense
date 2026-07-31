@@ -2,8 +2,9 @@
 
 **Workstation attention journal** — light sensors, local store, agent surfaces.
 
-> Status: **scaffold** · design locked · implementation not started  
-> Not screenpipe. Not a web SaaS. Not inside `roxabi-factory`.
+> Status: **phases 1–2 live** (collectors + store + CLI + daemon) · MCP/NATS still stubs  
+> Not screenpipe. Not a web SaaS. Not inside `roxabi-factory`.  
+> Agent SSOT: [`AGENTS.md`](./AGENTS.md) · Claude shim: [`CLAUDE.md`](./CLAUDE.md)
 
 ---
 
