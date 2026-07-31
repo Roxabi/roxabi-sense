@@ -3,7 +3,26 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from roxabi_sense.collectors.focus_watch import FocusAtspiWatch
+from roxabi_sense.collectors.focus_watch import FocusAtspiWatch, build_listener_script
+
+
+def test_build_listener_script_name_modes() -> None:
+    off = build_listener_script(name_events="off", name_throttle_s=10.0)
+    assert "_NAME_MODE = 'off'" in off
+    assert "if False:" in off  # do not register accessible-name
+
+    throttled = build_listener_script(name_events="throttled", name_throttle_s=10.0)
+    assert "_NAME_MODE = 'throttled'" in throttled
+    assert "_NAME_THROTTLE_MS = 10000" in throttled
+    assert "if True:" in throttled
+    assert "accessible-name" in throttled
+    # leading + trailing throttle (not drop-only)
+    assert "_name_trail_flush" in throttled
+    assert "_name_trail_scheduled" in throttled
+
+    on = build_listener_script(name_events="on", name_throttle_s=1.0)
+    assert "_NAME_MODE = 'on'" in on
+    assert "_NAME_THROTTLE_MS = 1000" in on
 
 
 def test_watch_invokes_callback_on_focus_change_line(monkeypatch) -> None:
@@ -12,12 +31,16 @@ def test_watch_invokes_callback_on_focus_change_line(monkeypatch) -> None:
     class FakeStdout:
         def __init__(self) -> None:
             self.lines = [
-                json.dumps({"type": "ready", "source": "atspi"}) + "\n",
+                json.dumps({"type": "ready", "source": "atspi", "name_events": "throttled"})
+                + "\n",
                 "not-json\n",
                 "[]\n",
                 json.dumps({"error": "gi:fail"}) + "\n",
                 json.dumps({"warn": "register x"}) + "\n",
-                json.dumps({"type": "focus_change", "source": "atspi"}) + "\n",
+                json.dumps(
+                    {"type": "focus_change", "source": "atspi", "reason": "activate"}
+                )
+                + "\n",
             ]
 
         def __iter__(self):
@@ -56,9 +79,9 @@ def test_watch_invokes_callback_on_focus_change_line(monkeypatch) -> None:
         watch._thread.join(timeout=2)
         assert not watch._thread.is_alive()
     watch.stop()
-    # only focus_change reaches callback (not ready/error/warn/bad json)
     assert len(events) == 1
     assert events[0].get("type") == "focus_change"
+    assert events[0].get("reason") == "activate"
 
 
 def test_callback_exception_isolated(monkeypatch) -> None:
@@ -71,8 +94,8 @@ def test_callback_exception_isolated(monkeypatch) -> None:
 
     class FakeStdout:
         def __iter__(self):
-            yield json.dumps({"type": "focus_change"}) + "\n"
-            yield json.dumps({"type": "focus_change"}) + "\n"
+            yield json.dumps({"type": "focus_change", "reason": "name"}) + "\n"
+            yield json.dumps({"type": "focus_change", "reason": "activate"}) + "\n"
 
         def close(self) -> None:
             pass
@@ -99,7 +122,7 @@ def test_callback_exception_isolated(monkeypatch) -> None:
         "roxabi_sense.collectors.focus_watch.subprocess.Popen",
         lambda *a, **k: FakeProc(),
     )
-    watch = FocusAtspiWatch(on_event=boom)
+    watch = FocusAtspiWatch(on_event=boom, name_events="throttled")
     watch.start()
     if watch._thread is not None:
         watch._thread.join(timeout=2)
@@ -124,7 +147,7 @@ def test_start_idempotent_when_running(monkeypatch) -> None:
             self._code = None
 
         def poll(self):
-            return None  # still running
+            return None
 
         def terminate(self) -> None:
             self._code = 0
@@ -143,7 +166,7 @@ def test_start_idempotent_when_running(monkeypatch) -> None:
         "roxabi_sense.collectors.focus_watch.subprocess.Popen",
         fake_popen,
     )
-    watch = FocusAtspiWatch(on_event=lambda m: None)
+    watch = FocusAtspiWatch(on_event=lambda m: None, name_events="off")
     watch.start()
     watch.start()
     assert n_popen["n"] == 1

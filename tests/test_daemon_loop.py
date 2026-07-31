@@ -68,3 +68,61 @@ def test_tick_all_still_batches_multiple(tmp_path: Path) -> None:
     assert n == 2
     assert f1.n == 1 and f2.n == 1
     store.close()
+
+
+class _FocusDual:
+    name = "focus_atspi"
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def tick(self, store: Store) -> int:
+        self.calls.append("tick")
+        store.append("focus", {"app": "x", "title": "t"})
+        return 1
+
+    def tick_focus(self, store: Store) -> int:
+        self.calls.append("tick_focus")
+        store.append("focus", {"app": "x", "title": "t"})
+        return 1
+
+    def tick_desktop(self, store: Store) -> int:
+        self.calls.append("tick_desktop")
+        store.append("desktop_snapshot", {"windows": []})
+        return 1
+
+
+def test_tick_one_method_focus_and_desktop(tmp_path: Path) -> None:
+    store = Store(tmp_path / "s.db")
+    f = _FocusDual()
+    assert tick_one(f, store, label="ev", method="tick_focus") == 1
+    assert tick_one(f, store, label="desk", method="tick_desktop") == 1
+    assert f.calls == ["tick_focus", "tick_desktop"]
+    store.close()
+
+
+def test_config_focus_lighten_defaults() -> None:
+    cfg = SenseConfig()
+    assert cfg.focus_backup_seconds == 180.0
+    assert cfg.focus_name_events == "throttled"
+    assert cfg.focus_name_throttle_s == 10.0
+    assert cfg.focus_event_min_interval_s == 0.5
+
+
+def test_focus_event_gate_leading_and_trailing() -> None:
+    from roxabi_sense.daemon_collectors import FocusEventGate
+
+    g = FocusEventGate(min_interval=0.5)
+    assert g.on_event(1.0) is True
+    assert g.trailing_at is None
+    # burst inside window → schedule trailing, no immediate probe
+    assert g.on_event(1.1) is False
+    assert g.trailing_at == 1.5
+    assert g.on_event(1.2) is False
+    assert g.trailing_at == 1.5
+    # before trailing deadline
+    assert g.on_timer(1.4) is False
+    # trailing fires once
+    assert g.on_timer(1.5) is True
+    assert g.trailing_at is None
+    assert g.on_timer(1.6) is False
