@@ -136,7 +136,7 @@ def test_compile_day_recap_focus_and_repos(tmp_path: Path) -> None:
 
     text = format_day_recap(recap)
     assert "sense recap" in text
-    assert "Away" in text
+    assert "Idle gaps" in text
     assert "degraded" in text
 
 

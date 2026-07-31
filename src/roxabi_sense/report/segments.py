@@ -35,12 +35,15 @@ class FocusSegment:
 
 @dataclass(frozen=True)
 class AwaySegment:
-    """Inferred absence (degraded): gap ≥ IDLE_GAP_S after last activity."""
+    """Inferred absence or meeting overlay on input-idle / activity gaps."""
 
     start: str
     end: str
     duration_s: float
-    mode: str = "degraded-gap"  # vs future logind / lock
+    mode: str = "degraded-gap"  # wayland-idle | logind | degraded-gap
+    presence: str = "away"  # away | meeting (compile-time annotation)
+    meeting_label: str | None = None
+    meeting_provider: str | None = None  # meet | zoom | teams
 
 
 def parse_ts(ts: str) -> datetime:
@@ -284,7 +287,8 @@ def hour_apps(
         _add(s.start, s.duration_s, s.app)
     if away:
         for a in away:
-            _add(a.start, a.duration_s, "away")
+            label = "meeting" if a.presence == "meeting" else "away"
+            _add(a.start, a.duration_s, label)
 
     ordered: list[tuple[str, list[tuple[str, float]]]] = []
     for hour in sorted(buckets.keys()):

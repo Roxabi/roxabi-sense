@@ -15,6 +15,7 @@ from roxabi_sense.report.enrich import (
     media_tracks,
     processes_seen,
 )
+from roxabi_sense.report.meeting import annotate_away_with_meetings
 from roxabi_sense.report.segments import (
     IDLE_GAP_S,
     MIN_DWELL_S,
@@ -46,6 +47,7 @@ class DayRecap:
     focus_segments: list[FocusSegment]
     away_segments: list[AwaySegment]
     away_total_s: float
+    meeting_total_s: float
     idle_mode: str  # "degraded-gap" | "none"
     time_by_app: list[tuple[str, float]]
     time_by_repo: list[tuple[str, float]]
@@ -77,7 +79,10 @@ def compile_day_recap(
 
     horizon = horizon_dt(end, now)
     gap_s = IDLE_GAP_S
-    away = away_segments(events, horizon=horizon, gap_s=gap_s)
+    away = annotate_away_with_meetings(
+        away_segments(events, horizon=horizon, gap_s=gap_s),
+        events,
+    )
     focus_ev = [e for e in events if e.kind == "focus"]
     segments = focus_segments(focus_ev, away, horizon=horizon)
 
@@ -98,6 +103,9 @@ def compile_day_recap(
     else:
         idle_mode = "none"
 
+    pure_away = [a for a in away if a.presence != "meeting"]
+    meetings = [a for a in away if a.presence == "meeting"]
+
     return DayRecap(
         day=day_label,
         start=start,
@@ -109,7 +117,8 @@ def compile_day_recap(
         focus_switches=max(0, len(segments) - 1) if segments else 0,
         focus_segments=segments,
         away_segments=away,
-        away_total_s=sum(a.duration_s for a in away),
+        away_total_s=sum(a.duration_s for a in pure_away),
+        meeting_total_s=sum(a.duration_s for a in meetings),
         idle_mode=idle_mode,
         time_by_app=time_by_app,
         time_by_repo=time_by_repo,
@@ -127,24 +136,36 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
     lines: list[str] = []
     span = _fmt_span(recap.first_event, recap.last_event)
     tracked = sum(s for _, s in recap.time_by_app)
-    lines.append(f"sense recap  {recap.day}")
-    lines.append(
-        f"window: {span}   events={recap.event_count}   "
+    totals = (
         f"focus_dwell={_fmt_dur(tracked)}   away={_fmt_dur(recap.away_total_s)}"
     )
+    if recap.meeting_total_s > 0:
+        totals += f"   meeting={_fmt_dur(recap.meeting_total_s)}"
+    lines.append(f"sense recap  {recap.day}")
+    lines.append(f"window: {span}   events={recap.event_count}   {totals}")
     if recap.kind_counts:
         kinds = "  ".join(f"{k}={v}" for k, v in list(recap.kind_counts.items())[:8])
         lines.append(f"kinds: {kinds}")
 
     lines.append("")
+    n_away = sum(1 for a in recap.away_segments if a.presence != "meeting")
+    n_meet = sum(1 for a in recap.away_segments if a.presence == "meeting")
     lines.append(
-        f"Away (mode={recap.idle_mode}, gap≥{_fmt_dur(IDLE_GAP_S)}, n={len(recap.away_segments)})"
+        f"Idle gaps (mode={recap.idle_mode}, gap≥{_fmt_dur(IDLE_GAP_S)}, "
+        f"away={n_away} meeting={n_meet})"
     )
     if recap.away_segments:
         for a in recap.away_segments[:20]:
+            tag = a.presence if a.presence == "meeting" else "away"
+            extra = ""
+            if a.presence == "meeting" and a.meeting_label:
+                label = a.meeting_label
+                if len(label) > 48:
+                    label = label[:47] + "…"
+                extra = f" · {label}"
             lines.append(
                 f"  {_local_hm(a.start)}–{_local_hm(a.end)}  {_fmt_dur(a.duration_s):>8}  "
-                f"[{a.mode}]"
+                f"[{a.mode}] {tag}{extra}"
             )
         if len(recap.away_segments) > 20:
             lines.append(f"  … +{len(recap.away_segments) - 20} more")
@@ -199,7 +220,7 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
 
     if recap.hour_apps:
         lines.append("")
-        lines.append("By hour (local, includes away)")
+        lines.append("By hour (local, includes away/meeting)")
         for hour, apps in recap.hour_apps[:max_hours]:
             bits = " · ".join(f"{a} {_fmt_dur(s)}" for a, s in apps[:4])
             lines.append(f"  {hour}  {bits}")
