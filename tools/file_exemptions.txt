@@ -1,0 +1,2 @@
+# Standalone system-python AT-SPI worker (gi); self-contained by design.
+src/roxabi_sense/atspi/agent_worker.py # 510 lines

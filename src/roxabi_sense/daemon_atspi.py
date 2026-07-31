@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from roxabi_sense.atspi import FocusAtspiAgent
+from roxabi_sense.atspi.trace_log import AtspiTraceWriter, default_trace_path
 from roxabi_sense.collectors.focus_atspi import FocusAtspiCollector
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.store import Store
@@ -22,16 +23,29 @@ def start_atspi_agent(
         name_events=cfg.focus_name_events,
         name_throttle_s=cfg.focus_name_throttle_s,
         probe_min_s=cfg.focus_event_min_interval_s,
+        trace=bool(cfg.atspi_trace),
     )
     try:
         agent.start()
         store.set_meta("atspi_agent", "starting")
-        print("sense atspi-agent: starting", flush=True)
+        store.set_meta("atspi_trace", "on" if cfg.atspi_trace else "off")
+        print(
+            f"sense atspi-agent: starting"
+            f"{' (TRACE ' + str(cfg.atspi_trace_hours) + 'h)' if cfg.atspi_trace else ''}",
+            flush=True,
+        )
         return agent
     except Exception as exc:  # noqa: BLE001
         print(f"sense atspi-agent failed: {exc} — poll cadence", flush=True)
         store.set_meta("atspi_agent", "dead")
         return None
+
+
+def make_trace_writer(cfg: SenseConfig) -> AtspiTraceWriter | None:
+    if not cfg.atspi_trace:
+        return None
+    path = cfg.atspi_trace_path or default_trace_path()
+    return AtspiTraceWriter(path=path, hours=float(cfg.atspi_trace_hours))
 
 
 def apply_probe_result(
@@ -64,10 +78,17 @@ def handle_atspi_msg(
     focus: FocusAtspiCollector | None,
     store: Store,
     on_activity: Callable[[], None],
+    trace: AtspiTraceWriter | None = None,
 ) -> None:
     typ = msg.get("type")
+    if typ == "atspi_raw":
+        if trace is not None:
+            trace.write(msg)
+        return
     if typ == "ready":
         store.set_meta("atspi_agent", "ready")
+        if trace is not None:
+            trace.write({"type": "agent_ready", "payload": msg})
         return
     if typ != "probe_result" or focus is None:
         return

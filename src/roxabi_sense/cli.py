@@ -66,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("mcp", help="Run MCP stdio server (not implemented)")
     sub.add_parser("install-service", help="Install systemd --user unit")
     sub.add_parser("once", help="Single collect tick then exit")
+    p_tr = sub.add_parser("atspi-trace", help="AT-SPI empirical JSONL trace status")
+    p_tr.add_argument("--path", type=Path, default=None, help="trace jsonl path")
+    p_tr.add_argument("--json", action="store_true", help="JSON summary")
 
     args = parser.parse_args(argv)
     if not args.cmd:
@@ -103,6 +106,30 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.cmd == "atspi-trace":
+        from roxabi_sense.atspi.trace_log import default_trace_path, summarize_trace
+
+        path = args.path or cfg.atspi_trace_path or default_trace_path()
+        summary = summarize_trace(path)
+        if args.json:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        else:
+            if summary.get("error"):
+                print(f"trace: missing ({path})")
+                print("hint: set [daemon] atspi_trace=true and restart sense")
+                return 1
+            print(f"path: {summary['path']}")
+            print(f"lines: {summary['lines']}")
+            print(f"by_type: {summary.get('by_type')}")
+            print(f"source_app_top: {summary.get('source_app_top')}")
+            print(f"multi_active_raw_events: {summary.get('multi_active_raw_events')}")
+            print(
+                "activate_source_vs_first_active_disagree: "
+                f"{summary.get('activate_source_vs_first_active_disagree')}"
+            )
+            for ex in summary.get("examples_disagree") or []:
+                print(f"  e.g. {ex}")
+        return 0
 
     parser.print_help()
     return 0

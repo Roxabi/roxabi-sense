@@ -37,6 +37,10 @@ class SenseConfig:
     focus_name_throttle_s: float = 10.0
     # Min interval between event-driven focus probes
     focus_event_min_interval_s: float = 0.5
+    # Empirical AT-SPI JSONL (event source + multi-ACTIVE) — not used by recap
+    atspi_trace: bool = False
+    atspi_trace_hours: float = 48.0
+    atspi_trace_path: Path | None = None
     offline_threshold_s: float = 120.0
     agent_sessions: bool = True
     process_presence: bool = True
@@ -84,6 +88,12 @@ def load_config(path: Path | None = None) -> SenseConfig:
             cfg.focus_name_throttle_s = float(daemon["focus_name_throttle_s"])
         if "focus_event_min_interval_s" in daemon:
             cfg.focus_event_min_interval_s = float(daemon["focus_event_min_interval_s"])
+        if "atspi_trace" in daemon:
+            cfg.atspi_trace = bool(daemon["atspi_trace"])
+        if "atspi_trace_hours" in daemon:
+            cfg.atspi_trace_hours = float(daemon["atspi_trace_hours"])
+        if "atspi_trace_path" in daemon:
+            cfg.atspi_trace_path = Path(str(daemon["atspi_trace_path"]))
         if "offline_threshold_s" in daemon:
             cfg.offline_threshold_s = float(daemon["offline_threshold_s"])
         for key in (

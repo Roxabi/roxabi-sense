@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import threading
 from collections.abc import Callable
-from typing import Any, Literal, cast
+from pathlib import Path
+from typing import Any, Literal
 
-from roxabi_sense.atspi.script import NameEventsMode, build_agent_script
+from roxabi_sense.atspi.script import NameEventsMode, agent_env, name_mode_normalized
 
 ProbeMode = Literal["focus", "desktop"]
+
+_WORKER = Path(__file__).resolve().with_name("agent_worker.py")
 
 
 def _system_python() -> str:
@@ -27,14 +31,13 @@ def probe_once(
     *,
     timeout: float = 5.0,
 ) -> list[dict[str, Any]]:
-    """One-shot desktop/focus inventory (sense once / tests) — no long-lived loop."""
-    script = build_agent_script()
-    import os
+    """One-shot desktop/focus inventory (sense once / tests)."""
     env = os.environ.copy()
+    env.update(agent_env())
     env["SENSE_ATSPI_ONCE"] = mode
     try:
         proc = subprocess.run(
-            [_system_python(), "-c", script],
+            [_system_python(), str(_WORKER)],
             capture_output=True,
             text=True,
             check=False,
@@ -67,14 +70,13 @@ class FocusAtspiAgent:
         name_events: NameEventsMode = "throttled",
         name_throttle_s: float = 10.0,
         probe_min_s: float = 0.5,
+        trace: bool = False,
     ) -> None:
         self._on_message = on_message
-        mode: NameEventsMode = (
-            name_events if name_events in ("off", "throttled", "on") else "throttled"
-        )
-        self._name_events = mode
+        self._name_events: NameEventsMode = name_mode_normalized(name_events)
         self._name_throttle_s = name_throttle_s
         self._probe_min_s = probe_min_s
+        self._trace = bool(trace)
         self._proc: subprocess.Popen[str] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -93,18 +95,23 @@ class FocusAtspiAgent:
                 pass
             self._proc = None
         self._stop.clear()
-        script = build_agent_script(
-            name_events=cast(NameEventsMode, self._name_events),
-            name_throttle_s=self._name_throttle_s,
-            probe_min_s=self._probe_min_s,
+        env = os.environ.copy()
+        env.update(
+            agent_env(
+                name_events=self._name_events,
+                name_throttle_s=self._name_throttle_s,
+                probe_min_s=self._probe_min_s,
+                trace=self._trace,
+            )
         )
         self._proc = subprocess.Popen(
-            [_system_python(), "-u", "-c", script],
+            [_system_python(), "-u", str(_WORKER)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
+            env=env,
         )
         self._thread = threading.Thread(
             target=self._read_loop, name="focus-atspi-agent", daemon=True
@@ -176,9 +183,10 @@ class FocusAtspiAgent:
                 elif typ == "warn":
                     print(f"sense atspi-agent: {msg.get('warn')}", flush=True)
                 elif typ == "ready":
+                    tr = "trace" if msg.get("trace") else "no-trace"
                     print(
                         f"sense atspi-agent: ready "
-                        f"(name_events={msg.get('name_events', '?')})",
+                        f"(name_events={msg.get('name_events', '?')} {tr})",
                         flush=True,
                     )
                 try:
