@@ -11,7 +11,6 @@ from collections.abc import Callable
 from typing import Any, Literal, cast
 
 from roxabi_sense.atspi.script import NameEventsMode, build_agent_script
-from typing import cast
 
 ProbeMode = Literal["focus", "desktop"]
 
