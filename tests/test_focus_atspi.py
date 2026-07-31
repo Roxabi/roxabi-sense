@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from roxabi_sense.collectors import focus_atspi_probe
+from roxabi_sense.atspi import agent as atspi_agent
 from roxabi_sense.collectors.focus_atspi import FocusAtspiCollector, WindowInfo
 from roxabi_sense.store import Store
 
@@ -304,13 +304,41 @@ def test_default_probe_bad_json(monkeypatch) -> None:
         stdout = "not-json\n"
         returncode = 0
 
-    monkeypatch.setattr(focus_atspi_probe.subprocess, "run", lambda *a, **k: R())
-    assert focus_atspi_probe.run_probe() == []
+    monkeypatch.setattr(atspi_agent.subprocess, "run", lambda *a, **k: R())
+    assert atspi_agent.probe_once("desktop") == []
 
 
 def test_default_probe_timeout(monkeypatch) -> None:
     def boom(*a, **k):
-        raise focus_atspi_probe.subprocess.TimeoutExpired(cmd="x", timeout=1)
+        raise atspi_agent.subprocess.TimeoutExpired(cmd="x", timeout=1)
 
-    monkeypatch.setattr(focus_atspi_probe.subprocess, "run", boom)
-    assert focus_atspi_probe.run_probe(focus_only=True) == []
+    monkeypatch.setattr(atspi_agent.subprocess, "run", boom)
+    assert atspi_agent.probe_once("focus") == []
+
+
+def test_apply_from_agent_payload(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        lambda app, pid: app,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
+    )
+    store = Store(tmp_path / "s.db")
+    c = FocusAtspiCollector(probe=lambda: [], sessions_loader=lambda: [])
+    n = c.apply(
+        store,
+        [{"app": "ghostty", "title": "A", "active": True, "role": "frame", "pid": 1}],
+        mode="focus",
+        probe_ms=4,
+    )
+    assert n == 1
+    assert store.get_meta("focus_probe_last_ms") == "4"
+    assert store.get_meta("focus_probe_last_mode") == "focus"
+    assert store.last_by_kind("desktop_snapshot") is None
+    store.close()

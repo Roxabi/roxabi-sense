@@ -7,7 +7,7 @@ from roxabi_sense.collectors.mpris import MprisCollector
 from roxabi_sense.collectors.process_presence import ProcessPresenceCollector
 from roxabi_sense.collectors.tmux_sessions import TmuxSessionsCollector
 
-# FocusAtspiWatch is a daemon adapter, not a fact collector — import from focus_watch.
+# Long-lived AT-SPI runtime lives in roxabi_sense.atspi (not a fact collector).
 
 __all__ = [
     "AgentSessionsCollector",
