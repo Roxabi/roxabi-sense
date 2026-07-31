@@ -1,48 +1,28 @@
-"""Join window focus → Grok/Claude session (tmux + process tree)."""
+"""Join window focus → Grok/Claude session (tmux pane + process tree)."""
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from roxabi_sense.util.proc import children_map, descendants, read_comm, read_cwd
+from roxabi_sense.util.session_registry import load_all_sessions, load_grok_sessions
 
-_GROK_SESSIONS = Path.home() / ".grok" / "active_sessions.json"
 _AGENT_COMMS = frozenset({"grok", "claude"})
-_TERMINAL_APPS = frozenset({"ghostty"})
+_TERMINAL_APPS = frozenset({"ghostty", "unnamed"})
 _TMUX = next(
     (p for p in ("/usr/bin/tmux", "/usr/local/bin/tmux") if Path(p).is_file()),
     None,
 )
 
-
-def load_grok_sessions(path: Path | None = None) -> list[dict[str, Any]]:
-    p = path or _GROK_SESSIONS
-    if not p.is_file():
-        return []
-    try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(raw, list):
-        return []
-    sessions: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        sessions.append(
-            {
-                "agent": "grok",
-                "session_id": item.get("session_id"),
-                "pid": item.get("pid"),
-                "cwd": item.get("cwd"),
-                "opened_at": item.get("opened_at"),
-            }
-        )
-    return sessions
+# Re-export for callers that imported load_grok_sessions from here
+__all__ = [
+    "find_agent_link",
+    "list_tmux_agent_panes",
+    "load_grok_sessions",
+]
 
 
 def _session_by_pid(sessions: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -62,8 +42,9 @@ def _link_from_session(
     match: str,
     pid: int | None = None,
 ) -> dict[str, Any]:
+    agent = str(s.get("agent") or "grok")
     return {
-        "agent": "grok",
+        "agent": agent,
         "session_id": s.get("session_id"),
         "cwd": s.get("cwd"),
         "pid": pid if pid is not None else s.get("pid"),
@@ -145,83 +126,103 @@ def list_tmux_agent_panes() -> list[dict[str, Any]]:
 
 
 def _score_title_cwd(title: str, cwd: str) -> int:
-    """Heuristic: does the window title mention the project folder?"""
     if not title or not cwd:
         return 0
     base = Path(cwd).name
-    if not base or len(base) < 4:
+    if not base or len(base) < 3:
         return 0
     t = f" {title.lower()} "
     b = base.lower()
     score = 0
-    # word-ish boundary via spaces/punct around basename
     if re.search(rf"(?<![a-z0-9]){re.escape(b)}(?![a-z0-9])", t):
         score += 10
     spaced = b.replace("-", " ").replace("_", " ")
     if spaced != b and spaced in title.lower():
         score += 8
     for tok in re.split(r"[-_]", b):
-        if len(tok) >= 6 and re.search(rf"(?<![a-z0-9]){re.escape(tok)}(?![a-z0-9])", t):
+        if len(tok) >= 5 and re.search(rf"(?<![a-z0-9]){re.escape(tok)}(?![a-z0-9])", t):
             score += 3
     return score
 
 
-def _find_via_tmux_title(
+def _resolve_pane_session(
+    pane: dict[str, Any],
+    *,
+    by_pid: dict[int, dict[str, Any]],
+    by_cwd: dict[str, dict[str, Any]],
+    tree: dict[int, list[int]],
+) -> tuple[dict[str, Any], str] | None:
+    path = str(pane.get("path") or "")
+    pane_pid = pane.get("pane_pid")
+    # 1) session.pid is descendant of pane shell (or equals pane)
+    if isinstance(pane_pid, int):
+        if pane_pid in by_pid:
+            return by_pid[pane_pid], "tmux_pane_pid"
+        for d in descendants(pane_pid, limit=80, tree=tree):
+            if d in by_pid:
+                return by_pid[d], "tmux_child_pid"
+    # 2) pane path == session cwd
+    if path:
+        if path in by_cwd:
+            return by_cwd[path], "tmux_path"
+        try:
+            resolved = str(Path(path).resolve())
+            if resolved in by_cwd:
+                return by_cwd[resolved], "tmux_path"
+        except OSError:
+            pass
+    return None
+
+
+def _find_via_tmux(
     title: str,
     sessions: list[dict[str, Any]],
     *,
     panes: list[dict[str, Any]] | None = None,
     tree: dict[int, list[int]] | None = None,
 ) -> dict[str, Any] | None:
+    """Match focused terminal to session via tmux pane path/pid (+ title break ties)."""
     agent_panes = panes if panes is not None else list_tmux_agent_panes()
     if not agent_panes or not sessions:
         return None
 
     by_pid = _session_by_pid(sessions)
-    by_cwd = {str(s.get("cwd")): s for s in sessions if s.get("cwd")}
+    by_cwd: dict[str, dict[str, Any]] = {}
+    for s in sessions:
+        cwd = s.get("cwd")
+        if not cwd:
+            continue
+        by_cwd[str(cwd)] = s
+        try:
+            by_cwd[str(Path(str(cwd)).resolve())] = s
+        except OSError:
+            pass
     cmap = tree if tree is not None else children_map()
 
     scored: list[tuple[int, int, dict[str, Any], str]] = []
     for pane in agent_panes:
-        path = pane.get("path") or ""
-        pane_pid = pane.get("pane_pid")
-        s = None
-        match = "tmux_path"
-        if isinstance(pane_pid, int) and pane_pid in by_pid:
-            s = by_pid[pane_pid]
-            match = "tmux_pane_pid"
-        elif path in by_cwd:
-            s = by_cwd[path]
-            match = "tmux_path"
-        elif isinstance(pane_pid, int):
-            for d in descendants(pane_pid, limit=50, tree=cmap):
-                if d in by_pid:
-                    s = by_pid[d]
-                    match = "tmux_child_pid"
-                    break
-        if s is None:
+        resolved = _resolve_pane_session(pane, by_pid=by_pid, by_cwd=by_cwd, tree=cmap)
+        if resolved is None:
             continue
-        title_score = _score_title_cwd(title, str(s.get("cwd") or path))
+        s, match = resolved
+        title_score = _score_title_cwd(title, str(s.get("cwd") or pane.get("path") or ""))
+        # Strong structural match: path/pid without title still counts high base
+        base = 20 if match in {"tmux_child_pid", "tmux_pane_pid"} else 15
         attached_bonus = 1 if pane.get("attached") else 0
-        scored.append((title_score, attached_bonus, s, match))
+        scored.append((base + title_score, attached_bonus, s, match))
 
     if not scored:
         return None
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
     best_score, _att, best_s, best_match = scored[0]
-    unique_sessions = {str(s.get("session_id")) for _, _, s, _ in scored}
-    # Require positive title signal when multiple sessions possible
-    if best_score == 0 and len(unique_sessions) > 1:
-        return None
-    if best_score == 0 and len(unique_sessions) == 1:
+    unique = {str(s.get("session_id")) for _, _, s, _ in scored}
+    if len(unique) == 1:
         return _link_from_session(best_s, match=best_match)
-    if best_score > 0:
-        # require clear winner when multi-session
-        if len(unique_sessions) > 1:
-            second = scored[1][0] if len(scored) > 1 else -1
-            if best_score < second + 5 and best_score == second:
-                return None
+    # multi-session: need title to break ties
+    second = scored[1][0] if len(scored) > 1 else -1
+    if best_score >= second + 5:
         return _link_from_session(best_s, match=f"{best_match}+title")
+    # path unique among top scores?
     return None
 
 
@@ -232,26 +233,40 @@ def find_agent_link(
     title: str | None = None,
     sessions: list[dict[str, Any]] | None = None,
     tree: dict[int, list[int]] | None = None,
+    panes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """
     Link a focused window to a Grok/Claude session.
 
-    1) Process tree under the window pid
-    2) Terminal (ghostty) + title ends with '- grok' → tmux pane + title≈project
+    1) Process tree under window pid (rare for Ghostty→tmux layout)
+    2) tmux panes (command=grok|claude) via pane_pid descendants + path==cwd
+
+    Pass ``panes`` (and ``sessions`` / ``tree``) from a batch enrich so
+    ``list_tmux_agent_panes`` runs once per tick, not once per window.
     """
-    sess = sessions if sessions is not None else load_grok_sessions()
+    sess = sessions if sessions is not None else load_all_sessions()
     cmap = tree if tree is not None else children_map()
 
     if window_pid is not None:
         hit = _find_via_process_tree(window_pid, sess, tree=cmap)
-        if hit is not None:
+        if hit is not None and hit.get("session_id"):
             return hit
+        # bare comm without session_id: keep as weak fallback after tmux
 
     app_l = (app or "").lower()
     title_s = (title or "").strip()
-    # Strict terminal gate — no "claude" substring on Chrome titles
-    if app_l not in _TERMINAL_APPS:
-        return None
-    if not title_s.lower().endswith("- grok") and " - grok" not in title_s.lower():
-        return None
-    return _find_via_tmux_title(title_s, sess, tree=cmap)
+    looks_agent = (
+        app_l in _TERMINAL_APPS
+        or " - grok" in title_s.lower()
+        or title_s.lower().endswith("- grok")
+        or " - claude" in title_s.lower()
+        or "claude" in app_l
+    )
+    if looks_agent or app_l in _TERMINAL_APPS:
+        tmux_hit = _find_via_tmux(title_s, sess, panes=panes, tree=cmap)
+        if tmux_hit is not None:
+            return tmux_hit
+
+    if window_pid is not None:
+        return _find_via_process_tree(window_pid, sess, tree=cmap)
+    return None

@@ -1,7 +1,7 @@
 """Focus / desktop facts from AT-SPI window lists (enrich + store).
 
 Probing lives in `roxabi_sense.atspi` (long-lived agent). This collector only
-dedups, resolves Unnamed→comm, attaches grok sessions, and writes store rows.
+dedups, resolves Unnamed→comm, attaches Grok/Claude sessions, and writes store rows.
 """
 
 from __future__ import annotations
@@ -14,8 +14,9 @@ from typing import Any, Literal
 
 from roxabi_sense.atspi import probe_once
 from roxabi_sense.store import Store
-from roxabi_sense.util.agent_link import find_agent_link, load_grok_sessions
+from roxabi_sense.util.agent_link import find_agent_link, list_tmux_agent_panes
 from roxabi_sense.util.proc import children_map, resolve_app_name
+from roxabi_sense.util.session_registry import load_all_sessions
 from roxabi_sense.util.titles import normalize_title, sanitize_display
 
 KIND = "focus"
@@ -74,7 +75,7 @@ class FocusAtspiCollector:
     ) -> None:
         self._probe = probe or _default_probe_desktop
         self._probe_focus = probe_focus or probe or _default_probe_focus
-        self._sessions_loader = sessions_loader or load_grok_sessions
+        self._sessions_loader = sessions_loader or load_all_sessions
         self._last_desktop_fp: str | None = None
         self._last_focus_key: tuple[Any, ...] | None = None
         self.probe_count = 0
@@ -168,11 +169,11 @@ class FocusAtspiCollector:
         store.append(KIND, body)
         return 1
 
-    def _enrich(
-        self, windows: list[WindowInfo], *, focus_only: bool
-    ) -> list[WindowInfo]:
+    def _enrich(self, windows: list[WindowInfo], *, focus_only: bool) -> list[WindowInfo]:
         sessions = self._sessions_loader()
         tree = children_map()
+        # One tmux list-panes per enrich (not per window).
+        panes = list_tmux_agent_panes()
         out: list[WindowInfo] = []
         for w in windows:
             if focus_only and not w.active:
@@ -181,7 +182,12 @@ class FocusAtspiCollector:
             raw = sanitize_display(w.title)
             title = normalize_title(raw)
             agent = find_agent_link(
-                w.pid, app=app, title=title, sessions=sessions, tree=tree
+                w.pid,
+                app=app,
+                title=title,
+                sessions=sessions,
+                tree=tree,
+                panes=panes,
             )
             out.append(
                 WindowInfo(

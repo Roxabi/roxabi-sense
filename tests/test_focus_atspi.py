@@ -14,7 +14,7 @@ def _patch_enrich(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "roxabi_sense.collectors.focus_atspi.find_agent_link",
-        lambda pid, app=None, title=None, sessions=None, tree=None: (
+        lambda pid, app=None, title=None, sessions=None, tree=None, panes=None: (
             {
                 "agent": "grok",
                 "session_id": "sid-1",
@@ -29,6 +29,10 @@ def _patch_enrich(monkeypatch) -> None:
     monkeypatch.setattr(
         "roxabi_sense.collectors.focus_atspi.children_map",
         lambda: {},
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.list_tmux_agent_panes",
+        lambda: [],
     )
 
 
@@ -91,6 +95,10 @@ def test_tick_focus_skips_desktop_snapshot(tmp_path: Path, monkeypatch) -> None:
         "roxabi_sense.collectors.focus_atspi.children_map",
         lambda: {},
     )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.list_tmux_agent_panes",
+        lambda: [],
+    )
     store = Store(tmp_path / "s.db")
     c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
     assert c.tick_focus(store) == 1
@@ -99,6 +107,52 @@ def test_tick_focus_skips_desktop_snapshot(tmp_path: Path, monkeypatch) -> None:
     assert store.get_meta("focus_probe_last_mode") == "focus"
     # second identical → 0
     assert c.tick_focus(store) == 0
+    store.close()
+
+
+def test_enrich_lists_tmux_once_for_many_windows(tmp_path: Path, monkeypatch) -> None:
+    """Desktop inventory: one list-panes per enrich, shared via panes=."""
+    calls = {"tmux": 0, "link": 0}
+    panes_seen: list[object] = []
+
+    def probe() -> list[WindowInfo]:
+        return [
+            WindowInfo(app="ghostty", title="A - grok", active=True, role="frame", pid=1),
+            WindowInfo(app="ghostty", title="B - grok", active=False, role="frame", pid=2),
+            WindowInfo(app="ghostty", title="C - grok", active=False, role="frame", pid=3),
+        ]
+
+    def fake_tmux():
+        calls["tmux"] += 1
+        return [{"pane_pid": 1, "command": "grok", "path": "/a", "attached": True}]
+
+    def fake_link(pid, app=None, title=None, sessions=None, tree=None, panes=None):
+        calls["link"] += 1
+        panes_seen.append(panes)
+        return None
+
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        lambda app, pid: app,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        fake_link,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.list_tmux_agent_panes",
+        fake_tmux,
+    )
+    store = Store(tmp_path / "s.db")
+    c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
+    c.tick(store)
+    assert calls["tmux"] == 1
+    assert calls["link"] == 3
+    assert all(p is panes_seen[0] for p in panes_seen)
     store.close()
 
 
@@ -129,9 +183,7 @@ def test_tick_focus_uses_probe_focus_not_probe(tmp_path: Path, monkeypatch) -> N
         lambda: {},
     )
     store = Store(tmp_path / "s.db")
-    c = FocusAtspiCollector(
-        probe=desktop, probe_focus=focus_only, sessions_loader=lambda: []
-    )
+    c = FocusAtspiCollector(probe=desktop, probe_focus=focus_only, sessions_loader=lambda: [])
     assert c.tick_focus(store) == 1
     assert calls == ["focus"]
     assert c.tick_desktop(store) >= 1
@@ -191,11 +243,15 @@ def test_agent_attach_updates_focus_key(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "roxabi_sense.collectors.focus_atspi.find_agent_link",
-        lambda pid, app=None, title=None, sessions=None, tree=None: state["agent"],
+        lambda pid, app=None, title=None, sessions=None, tree=None, panes=None: state["agent"],
     )
     monkeypatch.setattr(
         "roxabi_sense.collectors.focus_atspi.children_map",
         lambda: {},
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.list_tmux_agent_panes",
+        lambda: [],
     )
     store = Store(tmp_path / "s.db")
     c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
