@@ -23,6 +23,13 @@ def test_agent_env_and_worker_present() -> None:
     assert "atspi_raw" in text
 
 
+def test_product_focus_filter_in_worker_source() -> None:
+    text = _WORKER.read_text(encoding="utf-8")
+    assert "_product_focus_event" in text
+    assert "window:destroy" in text
+    assert "detail1" in text
+
+
 def test_window_from_src_logic() -> None:
     """Import pure helper by exec — worker is system-python standalone."""
     import importlib.util

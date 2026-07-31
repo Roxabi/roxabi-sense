@@ -1,5 +1,6 @@
 {
   "include": ["src", "tests"],
+  "exclude": ["src/roxabi_sense/atspi/agent_worker.py"],
   "pythonVersion": "3.13",
   "typeCheckingMode": "basic",
   "venvPath": ".",

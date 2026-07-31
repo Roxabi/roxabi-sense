@@ -10,10 +10,10 @@ import threading
 import time
 
 try:
-    import gi
+    import gi  # type: ignore[import-untyped,import-not-found]
 
     gi.require_version("Atspi", "2.0")
-    from gi.repository import Atspi, GLib
+    from gi.repository import Atspi, GLib  # type: ignore[import-untyped,import-not-found]
 except Exception as e:  # noqa: BLE001
     print(json.dumps({"type": "error", "error": f"gi:{e}"}), flush=True)
     sys.exit(1)
@@ -229,21 +229,24 @@ def emit_focus_win(win: dict, reason: str) -> None:
 
 
 def do_probe(mode: str, reason: str) -> None:
-    """Desktop/full inventory only (backup, once). Focus path uses emit_focus_win."""
+    """Desktop inventory (backup/once). Focus product path uses emit_focus_win."""
     global _last_probe_ms
     t0 = time.monotonic()
-    # Never use focus_only walk for product truth — multi-ACTIVE lies.
-    wins = walk(False) if mode in {"desktop", "full", "focus"} else walk(False)
-    if mode == "focus":
-        # Fallback only for once/cmd: prefer single ACTIVE if exactly one, else all active
+    wins = walk(False)
+    out_mode = mode if mode in {"desktop", "full", "focus"} else "desktop"
+    if out_mode == "focus":
+        # Only emit when exactly one ACTIVE — else empty (no multi-ACTIVE first-wins).
         act = [w for w in wins if w.get("active")]
-        wins = act[:1] if len(act) == 1 else (act[:1] if act else wins[:1])
+        wins = act if len(act) == 1 else []
+        out_mode = "focus"
+    elif out_mode == "full":
+        out_mode = "desktop"
     ms = int((time.monotonic() - t0) * 1000)
     _last_probe_ms = time.monotonic() * 1000.0
     emit(
         {
             "type": "probe_result",
-            "mode": mode if mode != "focus" else "focus",
+            "mode": out_mode,
             "reason": reason,
             "windows": wins,
             "ms": ms,
@@ -352,6 +355,33 @@ def trace_event(event) -> None:
     )
 
 
+def _product_focus_event(event) -> bool:
+    """True if this event should set product focus from event.source.
+
+    Trace may still record destroy/deactive; product must not treat them as focus.
+    """
+    try:
+        et = str(getattr(event, "type", "") or "")
+    except Exception:  # noqa: BLE001
+        return False
+    if et.startswith("window:destroy") or et.startswith("window:create"):
+        return False
+    if "state-changed:active" in et:
+        # detail1 == 0 → state cleared (losing focus); only detail1 truthy is gain.
+        try:
+            detail = getattr(event, "detail1", 1)
+        except Exception:  # noqa: BLE001
+            detail = 1
+        if not detail:
+            return False
+        return True
+    if et.startswith("window:activate"):
+        return True
+    if "accessible-name" in et or "property-change" in et:
+        return True  # title update path; still gated by name mode below
+    return False
+
+
 def on_event(event) -> None:
     global _name_last, _name_trail, _pending_win
     if _TRACE:
@@ -359,6 +389,8 @@ def on_event(event) -> None:
             trace_event(event)
         except Exception as e:  # noqa: BLE001
             emit({"type": "warn", "warn": f"trace:{e}"})
+    if not _product_focus_event(event):
+        return
     reason = event_reason(event)
     src = describe_src(event)
     win = window_from_src(src)
@@ -380,7 +412,7 @@ def on_event(event) -> None:
             return
         arm_win(win, "name")
         return
-    # activate / state-changed:active / create — truth = event source
+    # window:activate or state-changed:active (detail1 truthy) — source is focus
     arm_win(win, "activate")
 
 
