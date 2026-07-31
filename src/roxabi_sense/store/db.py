@@ -8,9 +8,11 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
+
+from roxabi_sense.util.time import to_z, utc_now_z
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -51,13 +53,25 @@ TIMELINE_KINDS: tuple[str, ...] = (
     "desktop_snapshot",
 )
 
+# Clamp query limits (CLI/store); avoid LIMIT -1 / unbounded scans.
+MAX_EVENT_LIMIT = 50_000
+DEFAULT_BETWEEN_LIMIT = 5_000
+DEFAULT_DAY_LIMIT = 200
+
+
+def clamp_event_limit(limit: int, *, default: int = DEFAULT_BETWEEN_LIMIT) -> int:
+    """Positive limit capped at MAX_EVENT_LIMIT."""
+    try:
+        n = int(limit)
+    except (TypeError, ValueError):
+        n = default
+    if n < 1:
+        return 1
+    return min(n, MAX_EVENT_LIMIT)
+
 
 def _utc_now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _to_z(dt: datetime) -> str:
-    return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return utc_now_z()
 
 
 @dataclass(frozen=True)
@@ -185,7 +199,10 @@ class Store:
                 out[kind] = ev
         return out
 
-    def events_between(self, start: str, end: str, *, limit: int = 5000) -> list[Event]:
+    def events_between(
+        self, start: str, end: str, *, limit: int = DEFAULT_BETWEEN_LIMIT
+    ) -> list[Event]:
+        lim = clamp_event_limit(limit, default=DEFAULT_BETWEEN_LIMIT)
         rows = self._conn.execute(
             """
             SELECT id, ts, kind, payload FROM events
@@ -193,7 +210,7 @@ class Store:
             ORDER BY ts ASC, id ASC
             LIMIT ?
             """,
-            (start, end, limit),
+            (start, end, lim),
         ).fetchall()
         return [self._row(r) for r in rows]
 
@@ -202,11 +219,12 @@ class Store:
         day: str | None = None,
         *,
         kinds: tuple[str, ...] = TIMELINE_KINDS,
-        limit: int = 200,
+        limit: int = DEFAULT_DAY_LIMIT,
     ) -> list[Event]:
+        lim = clamp_event_limit(limit, default=DEFAULT_DAY_LIMIT)
         start, end = self.day_bounds(day)
         if not kinds:
-            return self.events_between(start, end, limit=limit)
+            return self.events_between(start, end, limit=lim)
         placeholders = ",".join("?" * len(kinds))
         rows = self._conn.execute(
             f"""
@@ -215,7 +233,7 @@ class Store:
             ORDER BY ts ASC, id ASC
             LIMIT ?
             """,
-            (start, end, *kinds, limit),
+            (start, end, *kinds, lim),
         ).fetchall()
         return [self._row(r) for r in rows]
 
@@ -231,11 +249,15 @@ class Store:
             d = datetime.now().astimezone().date()
         start_local = datetime.combine(d, time.min, tzinfo=local_tz)
         end_local = datetime.combine(d + timedelta(days=1), time.min, tzinfo=local_tz)
-        return _to_z(start_local), _to_z(end_local)
+        return to_z(start_local), to_z(end_local)
 
     @staticmethod
     def _row(row: sqlite3.Row) -> Event:
-        payload = json.loads(row["payload"] or "{}")
+        raw = row["payload"] or "{}"
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = {"_corrupt": True, "raw": str(raw)[:200]}
         if not isinstance(payload, dict):
             payload = {"value": payload}
         return Event(id=int(row["id"]), ts=str(row["ts"]), kind=str(row["kind"]), payload=payload)

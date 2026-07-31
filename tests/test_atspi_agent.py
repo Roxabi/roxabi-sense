@@ -30,34 +30,37 @@ def test_product_focus_filter_in_worker_source() -> None:
     assert "detail1" in text
 
 
-def test_window_from_src_logic() -> None:
-    """Import pure helper by exec — worker is system-python standalone."""
-    import importlib.util
+def _load_window_from_src():
+    """Exec production window_from_src from worker source (no gi import)."""
+    import ast
 
-    spec = importlib.util.spec_from_file_location("agent_worker", _WORKER)
-    assert spec and spec.loader
-    # Can't import if gi missing — exec only the function via copy
-    # Instead test behavior through probe_result shape expectations:
+    tree = ast.parse(_WORKER.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "window_from_src":
+            mod = ast.Module(body=[node], type_ignores=[])
+            ast.fix_missing_locations(mod)
+            ns: dict[str, Any] = {}
+            exec(compile(mod, str(_WORKER), "exec"), ns)  # noqa: S102
+            return ns["window_from_src"]
+    raise AssertionError("window_from_src not found in agent_worker.py")
+
+
+def test_window_from_src_logic() -> None:
+    """Run real production helper extracted from agent_worker.py."""
+    window_from_src = _load_window_from_src()
     src = {
         "app": "Google Chrome",
         "frame_name": "Meet – Authentic x Silex",
         "pid": 123,
         "name": "tab",
     }
-    # Inline mirror of window_from_src (keep in sync with worker)
-    app = str(src.get("app") or "unknown")
-    title = str(src.get("frame_name") or src.get("name") or "")
-    win = {
-        "app": app,
-        "title": title,
-        "active": True,
-        "role": "frame",
-        "pid": src.get("pid"),
-        "focus_via": "event_source",
-    }
+    win = window_from_src(src)
+    assert win is not None
     assert win["app"] == "Google Chrome"
     assert win["title"].startswith("Meet")
     assert win["focus_via"] == "event_source"
+    assert win["pid"] == 123
+    assert window_from_src({"app": "unknown", "name": "", "pid": None}) is None
 
 
 def test_agent_callback_on_probe_result(monkeypatch) -> None:
@@ -160,9 +163,7 @@ def test_probe_once_parses_result(monkeypatch) -> None:
                     "type": "probe_result",
                     "mode": "desktop",
                     "reason": "once",
-                    "windows": [
-                        {"app": "x", "title": "y", "active": True, "role": "frame"}
-                    ],
+                    "windows": [{"app": "x", "title": "y", "active": True, "role": "frame"}],
                     "ms": 1,
                 }
             )

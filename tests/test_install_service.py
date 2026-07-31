@@ -27,10 +27,19 @@ def test_install_service_cli(tmp_path: Path, monkeypatch, capsys) -> None:
     sense_bin.chmod(0o755)
     # which finds sense if PATH includes it
     monkeypatch.setenv("PATH", f"{sense_bin.parent}:{tmp_path}")
+
+    def _fake_run(*_a, **_k):
+        class _R:
+            returncode = 0
+
+        return _R()
+
+    monkeypatch.setattr("roxabi_sense.install_service.subprocess.run", _fake_run)
     code = main(["install-service"])
     assert code == 0
     out = capsys.readouterr().out
     assert "wrote" in out
+    assert "daemon-reload" in out
     unit = tmp_path / "cfg" / "systemd" / "user" / "roxabi-sense.service"
     assert unit.is_file()
     body = unit.read_text(encoding="utf-8")

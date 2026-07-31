@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from roxabi_sense.store import Store
+from roxabi_sense.util.time import parse_ts
 
 # Daemon offline if last_tick older than this (seconds).
 DEFAULT_OFFLINE_THRESHOLD_S = 120.0
@@ -28,10 +29,6 @@ class Presence:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-
-def parse_ts(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
 def age_seconds(ts: str | None, *, now: datetime | None = None) -> float | None:

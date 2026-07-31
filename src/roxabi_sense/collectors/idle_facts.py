@@ -2,20 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from roxabi_sense.store import Store
+from roxabi_sense.util.time import parse_ts, to_z, utc_now_z
 
 KIND = "idle"
-
-
-def _to_z(dt: datetime) -> str:
-    return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def parse_ts(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
 def compute_idle_since(
@@ -29,7 +22,7 @@ def compute_idle_since(
         return last_activity_ts
     enter = parse_ts(enter_ts)
     since = enter - timedelta(seconds=threshold_s)
-    return _to_z(since)
+    return to_z(since)
 
 
 def append_idle_transition(
@@ -48,7 +41,7 @@ def append_idle_transition(
 
     On enter (idle=True), always set idle_since from last activity or ts - threshold.
     """
-    row_ts = ts or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    row_ts = ts or utc_now_z()
     payload: dict[str, Any] = {
         "idle": idle,
         "source": source,

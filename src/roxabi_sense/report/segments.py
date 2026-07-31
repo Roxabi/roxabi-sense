@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from roxabi_sense.store import Event
+from roxabi_sense.util.time import parse_ts, to_z
 from roxabi_sense.util.titles import normalize_title
 
 # Ignore micro-focus flickers when attributing dwell time.
@@ -44,14 +45,6 @@ class AwaySegment:
     presence: str = "away"  # away | meeting (compile-time annotation)
     meeting_label: str | None = None
     meeting_provider: str | None = None  # meet | zoom | teams
-
-
-def parse_ts(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-
-
-def to_z(dt: datetime) -> str:
-    return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def norm_app(raw: str | None) -> str:
@@ -216,8 +209,13 @@ def focus_segments(
                 continue
             segs.append(
                 FocusSegment(
-                    start=to_z(a0), end=to_z(a1), duration_s=dur,
-                    app=app, title=title, cwd=cwd, agent=agent,
+                    start=to_z(a0),
+                    end=to_z(a1),
+                    duration_s=dur,
+                    app=app,
+                    title=title,
+                    cwd=cwd,
+                    agent=agent,
                 )
             )
     return segs
