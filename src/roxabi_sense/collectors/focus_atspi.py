@@ -1,8 +1,7 @@
-"""Focused / visible windows via AT-SPI (Cosmic / Ghostty-friendly).
+"""Focus / desktop facts from AT-SPI window lists (enrich + store).
 
-- Resolve AT-SPI 'Unnamed' → /proc comm (ghostty)
-- Dedup focus on (app, normalized_title, agent_key)
-- Dual path: tick_focus (event, active-only) vs tick_desktop (rare full snapshot)
+Probing lives in `roxabi_sense.atspi` (long-lived agent). This collector only
+dedups, resolves Unnamed→comm, attaches grok sessions, and writes store rows.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from roxabi_sense.collectors.focus_atspi_probe import RawWindow, run_probe
+from roxabi_sense.atspi import probe_once
 from roxabi_sense.store import Store
 from roxabi_sense.util.agent_link import find_agent_link, load_grok_sessions
 from roxabi_sense.util.proc import children_map, resolve_app_name
@@ -41,6 +40,28 @@ def _agent_key(agent: dict[str, Any] | None) -> str:
     return str(agent.get("session_id") or agent.get("pid") or agent.get("match") or "")
 
 
+def raw_dicts_to_windows(rows: list[dict[str, Any]]) -> list[WindowInfo]:
+    out: list[WindowInfo] = []
+    for item in rows:
+        pid_raw = item.get("pid")
+        if isinstance(pid_raw, int):
+            pid: int | None = pid_raw
+        elif isinstance(pid_raw, str) and pid_raw.isdigit():
+            pid = int(pid_raw)
+        else:
+            pid = None
+        out.append(
+            WindowInfo(
+                app=str(item.get("app") or "unknown"),
+                title=str(item.get("title") or ""),
+                active=bool(item.get("active")),
+                role=str(item.get("role") or ""),
+                pid=pid,
+            )
+        )
+    return out
+
+
 class FocusAtspiCollector:
     name = "focus_atspi"
 
@@ -60,25 +81,52 @@ class FocusAtspiCollector:
         self.last_probe_ms = 0
 
     def tick(self, store: Store) -> int:
-        """Boot / poll fallback: focus + desktop from full probe."""
-        return self._tick(store, mode="full")
+        """Boot / poll / once: full inventory via one-shot probe."""
+        return self._tick_from_probe(store, mode="full")
 
     def tick_focus(self, store: Store) -> int:
-        """Event path: active window only → focus fact (no desktop_snapshot)."""
-        return self._tick(store, mode="focus")
+        return self._tick_from_probe(store, mode="focus")
 
     def tick_desktop(self, store: Store) -> int:
-        """Backup path: full inventory → desktop_snapshot (+ focus if changed)."""
-        return self._tick(store, mode="desktop")
+        return self._tick_from_probe(store, mode="desktop")
 
-    def _tick(self, store: Store, *, mode: TickMode) -> int:
+    def apply(
+        self,
+        store: Store,
+        windows: list[WindowInfo] | list[dict[str, Any]],
+        *,
+        mode: TickMode,
+        probe_ms: int | None = None,
+    ) -> int:
+        """Apply a window list from the long-lived agent (no subprocess)."""
         t0 = time.monotonic()
-        if mode == "focus":
-            raw = self._probe_focus()
+        raw: list[WindowInfo]
+        if windows and isinstance(windows[0], dict):
+            raw = raw_dicts_to_windows(
+                [w for w in windows if isinstance(w, dict)]  # type: ignore[list-item]
+            )
         else:
-            raw = self._probe()
+            raw = [w for w in windows if isinstance(w, WindowInfo)]
+        return self._finish(store, raw, mode=mode, probe_ms=probe_ms, t0=t0)
+
+    def _tick_from_probe(self, store: Store, *, mode: TickMode) -> int:
+        t0 = time.monotonic()
+        raw = self._probe_focus() if mode == "focus" else self._probe()
+        return self._finish(store, raw, mode=mode, probe_ms=None, t0=t0)
+
+    def _finish(
+        self,
+        store: Store,
+        raw: list[WindowInfo],
+        *,
+        mode: TickMode,
+        probe_ms: int | None,
+        t0: float,
+    ) -> int:
         windows = self._enrich(raw, focus_only=(mode == "focus"))
-        self.last_probe_ms = int((time.monotonic() - t0) * 1000)
+        self.last_probe_ms = (
+            probe_ms if probe_ms is not None else int((time.monotonic() - t0) * 1000)
+        )
         self.probe_count += 1
         store.set_meta("focus_probe_count", str(self.probe_count))
         store.set_meta("focus_probe_last_ms", str(self.last_probe_ms))
@@ -91,12 +139,9 @@ class FocusAtspiCollector:
                 self._last_desktop_fp = desktop_fp
                 store.append(SNAPSHOT, _desktop_payload(windows))
                 wrote += 1
-
         if mode == "desktop":
-            # Desktop backup also refreshes focus if the active window changed.
             wrote += self._maybe_write_focus(store, windows)
             return wrote
-
         if mode in {"full", "focus"}:
             wrote += self._maybe_write_focus(store, windows)
         return wrote
@@ -109,18 +154,18 @@ class FocusAtspiCollector:
         if focus_key == self._last_focus_key:
             return 0
         self._last_focus_key = focus_key
-        focus_body: dict[str, Any] = {
+        body: dict[str, Any] = {
             "app": active.app,
             "title": active.title,
             "source": "atspi",
         }
         if active.pid is not None:
-            focus_body["pid"] = active.pid
+            body["pid"] = active.pid
         if active.title_raw and active.title_raw != active.title:
-            focus_body["title_raw"] = active.title_raw
+            body["title_raw"] = active.title_raw
         if active.agent:
-            focus_body["agent"] = active.agent
-        store.append(KIND, focus_body)
+            body["agent"] = active.agent
+        store.append(KIND, body)
         return 1
 
     def _enrich(
@@ -136,11 +181,7 @@ class FocusAtspiCollector:
             raw = sanitize_display(w.title)
             title = normalize_title(raw)
             agent = find_agent_link(
-                w.pid,
-                app=app,
-                title=title,
-                sessions=sessions,
-                tree=tree,
+                w.pid, app=app, title=title, sessions=sessions, tree=tree
             )
             out.append(
                 WindowInfo(
@@ -188,18 +229,9 @@ def _desktop_payload(windows: list[WindowInfo]) -> dict[str, Any]:
     return payload
 
 
-def _raw_to_window_info(rows: list[RawWindow]) -> list[WindowInfo]:
-    return [
-        WindowInfo(
-            app=r.app, title=r.title, active=r.active, role=r.role, pid=r.pid
-        )
-        for r in rows
-    ]
-
-
 def _default_probe_desktop() -> list[WindowInfo]:
-    return _raw_to_window_info(run_probe(focus_only=False))
+    return raw_dicts_to_windows(probe_once("desktop"))
 
 
 def _default_probe_focus() -> list[WindowInfo]:
-    return _raw_to_window_info(run_probe(focus_only=True))
+    return raw_dicts_to_windows(probe_once("focus"))
