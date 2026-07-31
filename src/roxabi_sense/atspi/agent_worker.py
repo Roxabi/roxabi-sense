@@ -30,6 +30,7 @@ _name_last = 0.0
 _name_trail = False
 _pending = False
 _pending_reason = "activate"
+_pending_win: dict | None = None  # focus from event.source (not desktop walk)
 _loop = None
 _trace_name_last = 0.0
 
@@ -189,71 +190,127 @@ def walk(focus_only: bool, with_focused: bool = False) -> list:
     return windows
 
 
+def window_from_src(src: dict) -> dict | None:
+    """Build a single focus window from event.source — desktop walk not used."""
+    app = str(src.get("app") or "unknown")
+    title = str(src.get("frame_name") or src.get("name") or "")
+    pid = src.get("pid")
+    if app in {"unknown", ""} and not title and pid is None:
+        return None
+    if isinstance(pid, str) and pid.isdigit():
+        pid = int(pid)
+    elif not isinstance(pid, int):
+        pid = None
+    return {
+        "app": app or "unknown",
+        "title": title,
+        "active": True,
+        "role": "frame",
+        "pid": pid,
+        "focus_via": "event_source",
+    }
+
+
+def emit_focus_win(win: dict, reason: str) -> None:
+    """Emit focus fact from event source (no ACTIVE walk / first-wins)."""
+    global _last_probe_ms
+    _last_probe_ms = time.monotonic() * 1000.0
+    emit(
+        {
+            "type": "probe_result",
+            "mode": "focus",
+            "reason": reason,
+            "windows": [win],
+            "ms": 0,
+            "source": "atspi",
+            "focus_via": "event_source",
+        }
+    )
+
+
 def do_probe(mode: str, reason: str) -> None:
+    """Desktop/full inventory only (backup, once). Focus path uses emit_focus_win."""
     global _last_probe_ms
     t0 = time.monotonic()
-    wins = walk(mode == "focus")
+    # Never use focus_only walk for product truth — multi-ACTIVE lies.
+    wins = walk(False) if mode in {"desktop", "full", "focus"} else walk(False)
+    if mode == "focus":
+        # Fallback only for once/cmd: prefer single ACTIVE if exactly one, else all active
+        act = [w for w in wins if w.get("active")]
+        wins = act[:1] if len(act) == 1 else (act[:1] if act else wins[:1])
     ms = int((time.monotonic() - t0) * 1000)
     _last_probe_ms = time.monotonic() * 1000.0
     emit(
         {
             "type": "probe_result",
-            "mode": mode,
+            "mode": mode if mode != "focus" else "focus",
             "reason": reason,
             "windows": wins,
             "ms": ms,
             "source": "atspi",
+            "focus_via": "walk_fallback",
         }
     )
 
 
-def schedule_focus(reason: str) -> None:
-    global _trail_at, _pending_reason
+def schedule_focus_win(win: dict, reason: str) -> None:
+    global _trail_at, _pending_reason, _pending_win
     now = time.monotonic() * 1000.0
     if now - _last_probe_ms >= _PROBE_MIN_MS:
         _trail_at = None
-        do_probe("focus", reason)
+        emit_focus_win(win, reason)
         return
     _trail_at = _last_probe_ms + _PROBE_MIN_MS
     _pending_reason = reason if reason == "activate" else (_pending_reason or reason)
+    _pending_win = win
 
 
 def trail_tick() -> bool:
-    global _trail_at
+    global _trail_at, _pending_win
     if _trail_at is None:
         return True
     now = time.monotonic() * 1000.0
     if now >= _trail_at:
         reason = _pending_reason or "activate"
+        win = _pending_win
         _trail_at = None
-        do_probe("focus", reason)
+        _pending_win = None
+        if win:
+            emit_focus_win(win, reason)
     return True
 
 
 def flush_coalesce() -> bool:
-    global _pending, _pending_reason
+    global _pending, _pending_reason, _pending_win
     reason = _pending_reason
+    win = _pending_win
     _pending = False
     _pending_reason = "activate"
-    schedule_focus(reason)
+    _pending_win = None
+    if win:
+        schedule_focus_win(win, reason)
     return False
 
 
-def arm(reason: str) -> None:
-    global _pending, _pending_reason
+def arm_win(win: dict, reason: str) -> None:
+    global _pending, _pending_reason, _pending_win
     if _pending:
-        if reason == "activate":
-            _pending_reason = "activate"
+        # Prefer activate over name; always keep latest source window.
+        if reason == "activate" or _pending_reason != "activate":
+            _pending_reason = reason if reason == "activate" else _pending_reason
+            _pending_win = win
         return
     _pending = True
     _pending_reason = reason
+    _pending_win = win
     GLib.timeout_add(80, flush_coalesce)
 
 
 def name_trail_flush() -> bool:
-    global _name_trail
+    global _name_trail, _pending_win
     _name_trail = False
-    arm("name")
+    if _pending_win:
+        arm_win(_pending_win, "name")
     return False
 
 
@@ -296,13 +353,17 @@ def trace_event(event) -> None:
 
 
 def on_event(event) -> None:
-    global _name_last, _name_trail
+    global _name_last, _name_trail, _pending_win
     if _TRACE:
         try:
             trace_event(event)
         except Exception as e:  # noqa: BLE001
             emit({"type": "warn", "warn": f"trace:{e}"})
     reason = event_reason(event)
+    src = describe_src(event)
+    win = window_from_src(src)
+    if win is None:
+        return
     if reason == "name":
         if _NAME_MODE == "off":
             return
@@ -310,13 +371,17 @@ def on_event(event) -> None:
             now = time.monotonic() * 1000.0
             if now - _name_last >= _NAME_THROTTLE_MS:
                 _name_last = now
-                arm("name")
+                arm_win(win, "name")
             elif not _name_trail:
                 _name_trail = True
+                _pending_win = win
                 rem = max(1, int(_NAME_THROTTLE_MS - (now - _name_last)))
                 GLib.timeout_add(rem, name_trail_flush)
             return
-    arm(reason)
+        arm_win(win, "name")
+        return
+    # activate / state-changed:active / create — truth = event source
+    arm_win(win, "activate")
 
 
 def handle_cmd(msg) -> bool:

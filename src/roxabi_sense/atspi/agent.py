@@ -10,7 +10,7 @@ import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from roxabi_sense.atspi.script import NameEventsMode, agent_env, name_mode_normalized
 
