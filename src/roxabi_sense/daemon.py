@@ -11,7 +11,11 @@ from roxabi_sense.atspi import FocusAtspiAgent
 from roxabi_sense.collectors.focus_atspi import FocusAtspiCollector
 from roxabi_sense.collectors.idle_watch import IdleWatch
 from roxabi_sense.config import SenseConfig
-from roxabi_sense.daemon_atspi import handle_atspi_msg, start_atspi_agent
+from roxabi_sense.daemon_atspi import (
+    handle_atspi_msg,
+    make_trace_writer,
+    start_atspi_agent,
+)
 from roxabi_sense.daemon_collectors import (  # noqa: F401 — re-export for tests
     _utc_stamp,
     build_collectors,
@@ -29,7 +33,6 @@ _IDLE_RESPAWN_MAX_S = 60.0
 _ATSPI_RESPAWN_BASE_S = 2.0
 _ATSPI_RESPAWN_MAX_S = 60.0
 
-
 def run_daemon(cfg: SenseConfig) -> int:
     store = Store(cfg.db_path)
     focus: FocusAtspiCollector | None = FocusAtspiCollector() if cfg.focus else None
@@ -46,6 +49,9 @@ def run_daemon(cfg: SenseConfig) -> int:
     atspi_backoff = _ATSPI_RESPAWN_BASE_S
     last_activity_ts: str | None = None
     events_enabled = bool(focus is not None and cfg.focus_events)
+    trace = make_trace_writer(cfg)
+    if trace is not None:
+        print(f"sense atspi-trace: {trace.path} ({cfg.atspi_trace_hours}h)", flush=True)
 
     def _stop(*_args: object) -> None:
         nonlocal stop
@@ -68,10 +74,9 @@ def run_daemon(cfg: SenseConfig) -> int:
     print(
         f"sense daemon: db={cfg.db_path} poll={cfg.poll_seconds}s "
         f"focus={mode} desktop={cfg.focus_backup_seconds}s "
-        f"name_events={cfg.focus_name_events}/{cfg.focus_name_throttle_s}s "
-        f"atspi=long-lived idle_backend={cfg.idle_backend} "
-        f"threshold={cfg.idle_threshold_s}s "
-        f"poll_collectors={[c.name for c in poll_collectors]}",
+        f"name={cfg.focus_name_events}/{cfg.focus_name_throttle_s}s "
+        f"atspi=long-lived idle={cfg.idle_backend}/{cfg.idle_threshold_s}s "
+        f"poll={[c.name for c in poll_collectors]}",
         flush=True,
     )
 
@@ -156,7 +161,11 @@ def run_daemon(cfg: SenseConfig) -> int:
                         break
                 for msg in batch:
                     handle_atspi_msg(
-                        msg, focus=focus, store=store, on_activity=_on_activity
+                        msg,
+                        focus=focus,
+                        store=store,
+                        on_activity=_on_activity,
+                        trace=trace,
                     )
             except queue.Empty:
                 pass
@@ -237,7 +246,6 @@ def run_daemon(cfg: SenseConfig) -> int:
                     next_desktop = now + cfg.focus_backup_seconds
                     atspi_backoff = _ATSPI_RESPAWN_BASE_S
                 else:
-                    # Start failed (Popen/OSError) — keep poll, retry with backoff.
                     events_enabled = False
                     focus_on_poll = True
                     atspi_respawn_at = now + atspi_backoff
@@ -276,7 +284,6 @@ def run_daemon(cfg: SenseConfig) -> int:
         print("sense daemon: stopped", flush=True)
     return 0
 
-
 def collect_once(cfg: SenseConfig) -> int:
     store = Store(cfg.db_path)
     collectors = build_collectors(cfg)
@@ -288,6 +295,5 @@ def collect_once(cfg: SenseConfig) -> int:
         return n
     finally:
         store.close()
-
 
 __all__ = ["build_collectors", "build_poll_collectors", "collect_once", "run_daemon"]
