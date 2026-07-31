@@ -82,7 +82,13 @@ display.roundtrip()
 display.roundtrip()
 
 if notifier is None or seat is None:
-    emit({"type": "error", "error": f"missing notifier={notifier is not None} seat={seat is not None}"})
+    emit({
+        "type": "error",
+        "error": (
+            f"missing notifier={notifier is not None} "
+            f"seat={seat is not None}"
+        ),
+    })
     sys.exit(6)
 
 try:
