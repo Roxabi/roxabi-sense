@@ -9,13 +9,13 @@ from typing import Any
 
 from roxabi_sense.collectors.focus_atspi import FocusAtspiCollector
 from roxabi_sense.collectors.focus_watch import FocusAtspiWatch
-from roxabi_sense.collectors.idle_facts import append_idle_transition
-from roxabi_sense.collectors.idle_watch import SOURCE as WAYLAND_IDLE_SOURCE
 from roxabi_sense.collectors.idle_watch import IdleWatch
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.daemon_collectors import (  # noqa: F401 — re-export for tests
+    _utc_stamp,
     build_collectors,
     build_poll_collectors,
+    handle_idle_msg,
     tick_all,
     tick_one,
     want_logind_idle,
@@ -23,13 +23,8 @@ from roxabi_sense.daemon_collectors import (  # noqa: F401 — re-export for tes
 )
 from roxabi_sense.store import Store
 
-_FOCUS_EVENT_MIN_INTERVAL_S = 0.25
 _IDLE_RESPAWN_BASE_S = 2.0
 _IDLE_RESPAWN_MAX_S = 60.0
-
-
-def _utc_stamp() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def run_daemon(cfg: SenseConfig) -> int:
@@ -37,7 +32,7 @@ def run_daemon(cfg: SenseConfig) -> int:
     focus: FocusAtspiCollector | None = FocusAtspiCollector() if cfg.focus else None
     focus_on_poll = bool(focus is not None and not cfg.focus_events)
     stop = False
-    focus_q: queue.Queue[str] = queue.Queue()
+    focus_q: queue.Queue[dict[str, Any]] = queue.Queue()
     idle_q: queue.Queue[dict[str, Any]] = queue.Queue()
     watch: FocusAtspiWatch | None = None
     idle_watch: IdleWatch | None = None
@@ -46,6 +41,7 @@ def run_daemon(cfg: SenseConfig) -> int:
     idle_respawn_at = 0.0
     idle_backoff = _IDLE_RESPAWN_BASE_S
     last_activity_ts: str | None = None
+    event_min = max(0.05, float(cfg.focus_event_min_interval_s))
 
     def _stop(*_args: object) -> None:
         nonlocal stop
@@ -60,7 +56,7 @@ def run_daemon(cfg: SenseConfig) -> int:
     store.set_meta("last_tick", _utc_stamp())
 
     events_enabled = bool(focus is not None and cfg.focus_events)
-    mode = "events+backup" if events_enabled else ("poll" if focus else "off")
+    mode = "events+desktop" if events_enabled else ("poll" if focus else "off")
     use_wl = want_wayland_idle(cfg)
     poll_collectors = build_poll_collectors(
         cfg, logind_idle=want_logind_idle(cfg, wayland_healthy=False)
@@ -68,7 +64,8 @@ def run_daemon(cfg: SenseConfig) -> int:
 
     print(
         f"sense daemon: db={cfg.db_path} poll={cfg.poll_seconds}s "
-        f"focus={mode} backup={cfg.focus_backup_seconds}s "
+        f"focus={mode} desktop={cfg.focus_backup_seconds}s "
+        f"name_events={cfg.focus_name_events}/{cfg.focus_name_throttle_s}s "
         f"idle_backend={cfg.idle_backend} threshold={cfg.idle_threshold_s}s "
         f"poll_collectors={[c.name for c in poll_collectors]}",
         flush=True,
@@ -76,10 +73,14 @@ def run_daemon(cfg: SenseConfig) -> int:
 
     if events_enabled:
 
-        def _on_focus_event(_msg: dict[str, Any]) -> None:
-            focus_q.put("focus")
+        def _on_focus_event(msg: dict[str, Any]) -> None:
+            focus_q.put(msg if isinstance(msg, dict) else {"type": "focus_change"})
 
-        watch = FocusAtspiWatch(on_event=_on_focus_event)
+        watch = FocusAtspiWatch(
+            on_event=_on_focus_event,
+            name_events=cfg.focus_name_events,
+            name_throttle_s=cfg.focus_name_throttle_s,
+        )
         try:
             watch.start()
         except Exception as exc:  # noqa: BLE001
@@ -149,13 +150,15 @@ def run_daemon(cfg: SenseConfig) -> int:
                         break
                 if focus is not None and events_enabled:
                     now = time.monotonic()
-                    if now - last_focus_event_probe >= _FOCUS_EVENT_MIN_INTERVAL_S:
+                    if now - last_focus_event_probe >= event_min:
                         last_focus_event_probe = now
-                        n = tick_one(focus, store, label="focus_atspi/event")
+                        n = tick_one(
+                            focus, store, label="focus_atspi/event", method="tick_focus"
+                        )
                         store.set_meta("last_tick", _utc_stamp())
                         last_activity_ts = _utc_stamp()
+                        store.set_meta("last_focus_source", "event")
                         if n:
-                            store.set_meta("last_focus_source", "event")
                             print(
                                 f"sense focus-event: +{n} (total={store.count()})",
                                 flush=True,
@@ -168,11 +171,8 @@ def run_daemon(cfg: SenseConfig) -> int:
                     msg = idle_q.get_nowait()
                 except queue.Empty:
                     break
-                _handle_idle_msg(
-                    msg,
-                    store=store,
-                    cfg=cfg,
-                    last_activity_ts=last_activity_ts,
+                handle_idle_msg(
+                    msg, store=store, cfg=cfg, last_activity_ts=last_activity_ts
                 )
                 typ = msg.get("type")
                 if typ == "ready":
@@ -230,10 +230,16 @@ def run_daemon(cfg: SenseConfig) -> int:
                 next_poll = now + cfg.poll_seconds
 
             if events_enabled and focus is not None and now >= next_focus_backup:
-                n = tick_one(focus, store, label="focus_atspi/backup")
+                n = tick_one(
+                    focus, store, label="focus_atspi/desktop", method="tick_desktop"
+                )
                 store.set_meta("last_tick", _utc_stamp())
+                store.set_meta("last_focus_source", "backup")
                 if n:
-                    store.set_meta("last_focus_source", "backup")
+                    print(
+                        f"sense focus-desktop: +{n} (total={store.count()})",
+                        flush=True,
+                    )
                 next_focus_backup = now + cfg.focus_backup_seconds
 
             if watch is not None and not watch.running:
@@ -252,36 +258,6 @@ def run_daemon(cfg: SenseConfig) -> int:
         store.close()
         print("sense daemon: stopped", flush=True)
     return 0
-
-
-def _handle_idle_msg(
-    msg: dict[str, Any],
-    *,
-    store: Store,
-    cfg: SenseConfig,
-    last_activity_ts: str | None,
-) -> None:
-    typ = msg.get("type")
-    if typ == "ready":
-        store.set_meta("idle_watch", "ready")
-        print("sense idle-watch: ready (logind demoted)", flush=True)
-    elif typ == "error":
-        store.set_meta("idle_watch", "dead")
-        print(f"sense idle-watch error: {msg.get('error')}", flush=True)
-    elif typ == "idle" and isinstance(msg.get("idle"), bool):
-        idle_flag = bool(msg["idle"])
-        ts = _utc_stamp()
-        with store.batch():
-            append_idle_transition(
-                store,
-                idle=idle_flag,
-                source=WAYLAND_IDLE_SOURCE,
-                threshold_s=cfg.idle_threshold_s,
-                ts=ts,
-                last_activity_ts=None if idle_flag else last_activity_ts,
-            )
-            store.set_meta("last_tick", ts)
-
 
 
 def collect_once(cfg: SenseConfig) -> int:

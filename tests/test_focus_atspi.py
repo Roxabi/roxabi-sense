@@ -2,9 +2,34 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from roxabi_sense.collectors import focus_atspi
+from roxabi_sense.collectors import focus_atspi_probe
 from roxabi_sense.collectors.focus_atspi import FocusAtspiCollector, WindowInfo
 from roxabi_sense.store import Store
+
+
+def _patch_enrich(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        lambda app, pid: "ghostty" if app == "Unnamed" else app,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        lambda pid, app=None, title=None, sessions=None, tree=None: (
+            {
+                "agent": "grok",
+                "session_id": "sid-1",
+                "cwd": "/tmp/p",
+                "pid": 99,
+                "match": "session_pid",
+            }
+            if pid == 7280
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
+    )
 
 
 def test_focus_dedup_and_normalize(tmp_path: Path, monkeypatch) -> None:
@@ -30,29 +55,7 @@ def test_focus_dedup_and_normalize(tmp_path: Path, monkeypatch) -> None:
             ),
         ]
 
-    monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
-        lambda app, pid: "ghostty" if app == "Unnamed" else app,
-    )
-    monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
-        lambda pid, app=None, title=None, sessions=None, tree=None: (
-            {
-                "agent": "grok",
-                "session_id": "sid-1",
-                "cwd": "/tmp/p",
-                "pid": 99,
-                "match": "session_pid",
-            }
-            if pid == 7280
-            else None
-        ),
-    )
-    monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
-        lambda: {},
-    )
-
+    _patch_enrich(monkeypatch)
     store = Store(tmp_path / "s.db")
     c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
     assert c.tick(store) == 2
@@ -64,6 +67,69 @@ def test_focus_dedup_and_normalize(tmp_path: Path, monkeypatch) -> None:
     assert "Thinking" in (focus.payload.get("title_raw") or "")
     assert focus.payload["agent"]["session_id"] == "sid-1"
     assert store.count() == 2
+    assert store.get_meta("focus_probe_count") == "2"
+    assert store.get_meta("focus_probe_last_mode") == "full"
+    store.close()
+
+
+def test_tick_focus_skips_desktop_snapshot(tmp_path: Path, monkeypatch) -> None:
+    def probe() -> list[WindowInfo]:
+        return [
+            WindowInfo(app="ghostty", title="A", active=True, role="frame", pid=1),
+            WindowInfo(app="slack", title="B", active=False, role="frame", pid=2),
+        ]
+
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        lambda app, pid: app,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
+    )
+    store = Store(tmp_path / "s.db")
+    c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
+    assert c.tick_focus(store) == 1
+    assert store.last_by_kind("desktop_snapshot") is None
+    assert store.last_by_kind("focus") is not None
+    assert store.get_meta("focus_probe_last_mode") == "focus"
+    # second identical → 0
+    assert c.tick_focus(store) == 0
+    store.close()
+
+
+def test_tick_desktop_writes_snapshot(tmp_path: Path, monkeypatch) -> None:
+    state = {"bg": "chan-a"}
+
+    def probe() -> list[WindowInfo]:
+        return [
+            WindowInfo(app="ghostty", title="A", active=True, role="frame", pid=1),
+            WindowInfo(app="slack", title=state["bg"], active=False, role="frame", pid=2),
+        ]
+
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        lambda app, pid: app,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
+    )
+    store = Store(tmp_path / "s.db")
+    c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
+    assert c.tick_desktop(store) == 2  # snapshot + focus
+    assert store.last_by_kind("desktop_snapshot") is not None
+    state["bg"] = "chan-b"
+    assert c.tick_desktop(store) == 1  # desktop only
+    assert store.get_meta("focus_probe_last_mode") == "desktop"
     store.close()
 
 
@@ -104,7 +170,7 @@ def test_agent_attach_updates_focus_key(tmp_path: Path, monkeypatch) -> None:
         "pid": 9,
         "match": "tmux",
     }
-    assert c.tick(store) >= 1  # focus and/or desktop rewrite
+    assert c.tick(store) >= 1
     focus = store.last_by_kind("focus")
     assert focus is not None
     assert focus.payload["agent"]["session_id"] == "new"
@@ -112,9 +178,7 @@ def test_agent_attach_updates_focus_key(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_desktop_only_change_no_new_focus(tmp_path: Path, monkeypatch) -> None:
-    state = {
-        "bg_title": "chan-a",
-    }
+    state = {"bg_title": "chan-a"}
 
     def probe() -> list[WindowInfo]:
         return [
@@ -149,10 +213,10 @@ def test_desktop_only_change_no_new_focus(tmp_path: Path, monkeypatch) -> None:
     store = Store(tmp_path / "s.db")
     c = FocusAtspiCollector(probe=probe, sessions_loader=lambda: [])
     assert c.tick(store) == 2
-    focus_n = store.count()  # 2
+    focus_n = store.count()
     state["bg_title"] = "chan-b"
     n = c.tick(store)
-    assert n == 1  # desktop only
+    assert n == 1
     assert store.count() == focus_n + 1
     focus = store.last_by_kind("focus")
     assert focus is not None
@@ -203,13 +267,13 @@ def test_default_probe_bad_json(monkeypatch) -> None:
         stdout = "not-json\n"
         returncode = 0
 
-    monkeypatch.setattr(focus_atspi.subprocess, "run", lambda *a, **k: R())
-    assert focus_atspi._default_probe() == []
+    monkeypatch.setattr(focus_atspi_probe.subprocess, "run", lambda *a, **k: R())
+    assert focus_atspi_probe.run_probe() == []
 
 
 def test_default_probe_timeout(monkeypatch) -> None:
     def boom(*a, **k):
-        raise focus_atspi.subprocess.TimeoutExpired(cmd="x", timeout=1)
+        raise focus_atspi_probe.subprocess.TimeoutExpired(cmd="x", timeout=1)
 
-    monkeypatch.setattr(focus_atspi.subprocess, "run", boom)
-    assert focus_atspi._default_probe() == []
+    monkeypatch.setattr(focus_atspi_probe.subprocess, "run", boom)
+    assert focus_atspi_probe.run_probe(focus_only=True) == []

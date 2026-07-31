@@ -1,8 +1,10 @@
 """AT-SPI focus event watcher (system python + GLib main loop).
 
 Runs a long-lived subprocess that registers Atspi.EventListener callbacks and
-prints one JSON line per event. The daemon main loop consumes lines and
-re-probes/writes via FocusAtspiCollector.tick (dedup still applies).
+prints one JSON line per event. Daemon re-probes via FocusAtspiCollector.tick_focus.
+
+Name (accessible-name) events are off | throttled | on — Chrome tab churn is the
+main reason throttled is the default.
 """
 
 from __future__ import annotations
@@ -13,64 +15,104 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
-# Long-running listener — system interpreter has gi/PyGObject.
-_LISTENER_SCRIPT = r"""
+NameEventsMode = Literal["off", "throttled", "on"]
+
+
+def build_listener_script(
+    *,
+    name_events: NameEventsMode = "throttled",
+    name_throttle_s: float = 10.0,
+) -> str:
+    """Build the AT-SPI listener subprocess source (testable)."""
+    name_mode = name_events if name_events in {"off", "throttled", "on"} else "throttled"
+    throttle_ms = max(0, int(float(name_throttle_s) * 1000))
+    register_name = name_mode != "off"
+    return f'''
 import json
 import sys
+import time
 
 try:
     import gi
     gi.require_version("Atspi", "2.0")
     from gi.repository import Atspi, GLib
 except Exception as e:
-    print(json.dumps({"error": f"gi:{e}"}), flush=True)
+    print(json.dumps({{"error": f"gi:{{e}}"}}), flush=True)
     sys.exit(1)
 
-# Coalesce bursts (spinners) — still event-driven, just not every frame.
+_NAME_MODE = {name_mode!r}
+_NAME_THROTTLE_MS = {throttle_ms}
 _pending = False
+_pending_reason = "activate"
+_last_name_emit = 0.0
 
 def _flush():
-    global _pending
+    global _pending, _pending_reason
+    reason = _pending_reason
     _pending = False
-    print(json.dumps({"type": "focus_change", "source": "atspi"}), flush=True)
-    return False  # one-shot timeout
+    _pending_reason = "activate"
+    print(json.dumps({{"type": "focus_change", "source": "atspi", "reason": reason}}), flush=True)
+    return False
+
+def _event_reason(event) -> str:
+    try:
+        et = str(getattr(event, "type", "") or "")
+    except Exception:
+        et = ""
+    if "accessible-name" in et or "property-change" in et:
+        return "name"
+    return "activate"
 
 def on_event(event):
-    global _pending
+    global _pending, _pending_reason, _last_name_emit
+    reason = _event_reason(event)
+    if reason == "name":
+        if _NAME_MODE == "off":
+            return
+        if _NAME_MODE == "throttled":
+            now = time.monotonic() * 1000.0
+            if now - _last_name_emit < _NAME_THROTTLE_MS:
+                return
+            _last_name_emit = now
     if _pending:
+        # Prefer activate over name if both coalesce in the same window.
+        if reason == "activate":
+            _pending_reason = "activate"
         return
     _pending = True
-    # 80ms coalesce window
+    _pending_reason = reason
     GLib.timeout_add(80, _flush)
 
 try:
     Atspi.init()
 except Exception as e:
-    print(json.dumps({"error": f"init:{e}"}), flush=True)
+    print(json.dumps({{"error": f"init:{{e}}"}}), flush=True)
     sys.exit(1)
 
 listener = Atspi.EventListener.new(on_event)
-for t in (
+_types = [
     "window:activate",
     "window:create",
     "window:destroy",
     "object:state-changed:active",
-    "object:property-change:accessible-name",
-):
+]
+if {register_name!r}:
+    _types.append("object:property-change:accessible-name")
+for t in _types:
     try:
         listener.register(t)
     except Exception as e:
-        print(json.dumps({"warn": f"register {t}: {e}"}), flush=True)
+        print(json.dumps({{"warn": f"register {{t}}: {{e}}"}}), flush=True)
 
-print(json.dumps({"type": "ready", "source": "atspi"}), flush=True)
+print(json.dumps({{"type": "ready", "source": "atspi", "name_events": _NAME_MODE}}), flush=True)
 _loop = GLib.MainLoop()
 try:
     _loop.run()
 except KeyboardInterrupt:
     pass
-"""
+'''
 
 
 def _system_python() -> str:
@@ -83,8 +125,19 @@ def _system_python() -> str:
 class FocusAtspiWatch:
     """Subprocess AT-SPI listener → callback on focus/title events."""
 
-    def __init__(self, on_event: Callable[[dict[str, Any]], None]) -> None:
+    def __init__(
+        self,
+        on_event: Callable[[dict[str, Any]], None],
+        *,
+        name_events: NameEventsMode = "throttled",
+        name_throttle_s: float = 10.0,
+    ) -> None:
         self._on_event = on_event
+        mode: NameEventsMode = (
+            name_events if name_events in ("off", "throttled", "on") else "throttled"
+        )
+        self._name_events: NameEventsMode = mode
+        self._name_throttle_s = name_throttle_s
         self._proc: subprocess.Popen[str] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -96,7 +149,6 @@ class FocusAtspiWatch:
     def start(self) -> None:
         if self.running:
             return
-        # Reap previous dead process if any
         if self._proc is not None and self._proc.poll() is not None:
             try:
                 self._proc.wait(timeout=0.1)
@@ -104,9 +156,12 @@ class FocusAtspiWatch:
                 pass
             self._proc = None
         self._stop.clear()
-        # stderr=DEVNULL: avoids pipe fill hang (GLib/AT-SPI noise)
+        script = build_listener_script(
+            name_events=self._name_events,
+            name_throttle_s=self._name_throttle_s,
+        )
         self._proc = subprocess.Popen(
-            [_system_python(), "-u", "-c", _LISTENER_SCRIPT],
+            [_system_python(), "-u", "-c", script],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -123,7 +178,6 @@ class FocusAtspiWatch:
         self._stop.set()
         proc = self._proc
         if proc is not None:
-            # Unblock reader stuck on stdout
             try:
                 if proc.stdout is not None:
                     proc.stdout.close()
@@ -167,7 +221,11 @@ class FocusAtspiWatch:
                     print(f"sense focus-watch: {msg['warn']}", flush=True)
                     continue
                 if msg.get("type") == "ready":
-                    print("sense focus-watch: AT-SPI events armed", flush=True)
+                    print(
+                        f"sense focus-watch: AT-SPI events armed "
+                        f"(name_events={msg.get('name_events', '?')})",
+                        flush=True,
+                    )
                     continue
                 if msg.get("type") == "focus_change":
                     try:
@@ -175,5 +233,4 @@ class FocusAtspiWatch:
                     except Exception as exc:  # noqa: BLE001
                         print(f"sense focus-watch callback error: {exc}", flush=True)
         except ValueError:
-            # stdout closed during stop()
             pass

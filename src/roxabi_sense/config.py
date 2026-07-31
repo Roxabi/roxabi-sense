@@ -5,6 +5,7 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from roxabi_sense.paths import default_config_path, default_db_path
 
@@ -20,14 +21,22 @@ DEFAULT_PROCESS_NAMES = (
     "claude",
 )
 
+NameEventsMode = Literal["off", "throttled", "on"]
+
 
 @dataclass
 class SenseConfig:
     poll_seconds: float = 5.0
     db_path: Path = field(default_factory=default_db_path)
-    # Focus: AT-SPI EventListener (primary) + slow backup poll
+    # Focus: AT-SPI EventListener (primary) + rare full desktop backup
     focus_events: bool = True
-    focus_backup_seconds: float = 30.0
+    # Full desktop_snapshot interval (seconds). Events use active-only probe.
+    focus_backup_seconds: float = 180.0
+    # accessible-name: off | throttled | on (Chrome tab churn)
+    focus_name_events: NameEventsMode = "throttled"
+    focus_name_throttle_s: float = 10.0
+    # Min interval between event-driven focus probes
+    focus_event_min_interval_s: float = 0.5
     offline_threshold_s: float = 120.0
     agent_sessions: bool = True
     process_presence: bool = True
@@ -40,6 +49,17 @@ class SenseConfig:
     focus: bool = True
     process_names: tuple[str, ...] = DEFAULT_PROCESS_NAMES
     machine: str = "laptop"
+
+
+def _parse_name_events(raw: object) -> NameEventsMode:
+    s = str(raw).strip().lower()
+    if s in {"off", "throttled", "on"}:
+        return s  # type: ignore[return-value]
+    if s in {"false", "0", "no"}:
+        return "off"
+    if s in {"true", "1", "yes"}:
+        return "on"
+    return "throttled"
 
 
 def load_config(path: Path | None = None) -> SenseConfig:
@@ -58,6 +78,12 @@ def load_config(path: Path | None = None) -> SenseConfig:
             cfg.focus_events = bool(daemon["focus_events"])
         if "focus_backup_seconds" in daemon:
             cfg.focus_backup_seconds = float(daemon["focus_backup_seconds"])
+        if "focus_name_events" in daemon:
+            cfg.focus_name_events = _parse_name_events(daemon["focus_name_events"])
+        if "focus_name_throttle_s" in daemon:
+            cfg.focus_name_throttle_s = float(daemon["focus_name_throttle_s"])
+        if "focus_event_min_interval_s" in daemon:
+            cfg.focus_event_min_interval_s = float(daemon["focus_event_min_interval_s"])
         if "offline_threshold_s" in daemon:
             cfg.offline_threshold_s = float(daemon["offline_threshold_s"])
         for key in (
@@ -78,7 +104,6 @@ def load_config(path: Path | None = None) -> SenseConfig:
             cfg.process_names = tuple(str(x) for x in collectors["process_names"])
         if "machine" in nats:
             cfg.machine = str(nats["machine"])
-    # Env overrides (tests / install)
     import os
 
     if os.environ.get("SENSE_DB"):
