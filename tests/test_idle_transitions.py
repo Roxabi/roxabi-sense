@@ -52,13 +52,21 @@ def test_idle_collector_disabled(tmp_path: Path) -> None:
     store.close()
 
 
-def test_no_heartbeat_kind_from_once(tmp_path: Path, monkeypatch) -> None:
-    db = tmp_path / "s.db"
-    monkeypatch.setenv("SENSE_DB", str(db))
-    from roxabi_sense.cli import main
+def test_no_heartbeat_kind_from_once(tmp_path: Path) -> None:
+    """Hermetic once: no host collectors, no heartbeat kind."""
+    from roxabi_sense.daemon import collect_once
 
-    # Disable noisy collectors that need system tools — still no heartbeat
-    main(["once"])
+    db = tmp_path / "s.db"
+    cfg = SenseConfig(
+        db_path=db,
+        agent_sessions=False,
+        process_presence=False,
+        idle=False,
+        mpris=False,
+        tmux=False,
+        focus=False,
+    )
+    collect_once(cfg)
     with Store(db) as store:
         rows = store.events_between("1970-01-01T00:00:00Z", "2100-01-01T00:00:00Z", limit=5000)
         kinds = {r.kind for r in rows}

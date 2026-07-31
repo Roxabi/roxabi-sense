@@ -157,6 +157,7 @@ class IdleWatch:
         self._proc: subprocess.Popen[str] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._generation = 0
         self.last_error: str | None = None
         self.ready = False
 
@@ -176,6 +177,8 @@ class IdleWatch:
         self._stop.clear()
         self.ready = False
         self.last_error = None
+        self._generation += 1
+        gen = self._generation
         threshold_ms = max(1000, int(self.threshold_s * 1000))
         _, proto = idle_watch_paths()
         proto_s = str(proto) if proto.is_dir() else ""
@@ -197,34 +200,45 @@ class IdleWatch:
         )
         self._thread = threading.Thread(
             target=self._read_loop,
+            args=(gen,),
             name="idle-wayland-watch",
             daemon=True,
         )
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, *, timeout: float = 2.0) -> None:
+        """Tear down subprocess + reader (parity with FocusAtspiAgent.stop)."""
         self._stop.set()
+        self._generation += 1  # invalidate old reader finally/ready writes
         proc = self._proc
-        if proc is None:
-            return
-        try:
-            proc.terminate()
-            proc.wait(timeout=2)
-        except Exception:  # noqa: BLE001
+        if proc is not None:
             try:
-                proc.kill()
+                if proc.stdout is not None:
+                    proc.stdout.close()
             except Exception:  # noqa: BLE001
                 pass
+            try:
+                proc.terminate()
+                proc.wait(timeout=timeout)
+            except Exception:  # noqa: BLE001
+                try:
+                    proc.kill()
+                    proc.wait(timeout=timeout)
+                except Exception:  # noqa: BLE001
+                    pass
         self._proc = None
+        if self._thread is not None:
+            self._thread.join(timeout=timeout)
+            self._thread = None
         self.ready = False
 
-    def _read_loop(self) -> None:
+    def _read_loop(self, gen: int) -> None:
         proc = self._proc
         if proc is None or proc.stdout is None:
             return
         try:
             for line in proc.stdout:
-                if self._stop.is_set():
+                if self._stop.is_set() or gen != self._generation:
                     break
                 line = line.strip()
                 if not line:
@@ -237,13 +251,18 @@ class IdleWatch:
                     continue
                 typ = msg.get("type")
                 if typ == "ready":
-                    self.ready = True
+                    if gen == self._generation:
+                        self.ready = True
                 elif typ == "error":
                     self.last_error = str(msg.get("error") or "error")
-                    self.ready = False
+                    if gen == self._generation:
+                        self.ready = False
                 try:
                     self._on_event(msg)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    print(f"sense idle-watch callback error: {exc}", flush=True)
+        except ValueError:
+            pass  # closed stdout during stop
         finally:
-            self.ready = False
+            if gen == self._generation:
+                self.ready = False

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from roxabi_sense import __version__
-from roxabi_sense.config import load_config
+from roxabi_sense.config import ConfigError, load_config
 from roxabi_sense.daemon import collect_once, run_daemon
 from roxabi_sense.install_service import install_service
 from roxabi_sense.paths import default_config_path
@@ -18,7 +18,7 @@ from roxabi_sense.report import (
     format_presence_lines,
     presence_from_store,
 )
-from roxabi_sense.store import STATUS_KINDS, Store
+from roxabi_sense.store import DEFAULT_DAY_LIMIT, STATUS_KINDS, Store, clamp_event_limit
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,7 +75,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    cfg = load_config(args.config)
+    try:
+        cfg = load_config(args.config)
+    except ConfigError as exc:
+        print(f"sense: {exc}", file=sys.stderr)
+        return 2
 
     if args.cmd == "daemon":
         return run_daemon(cfg)
@@ -198,10 +202,11 @@ def cmd_day(db_path: Path, *, day: str | None, as_json: bool, limit: int) -> int
     if not db_path.is_file():
         print(f"db: missing ({db_path})", file=sys.stderr)
         return 1
+    lim = clamp_event_limit(limit, default=DEFAULT_DAY_LIMIT)
     try:
         with Store(db_path) as store:
             start, end = store.day_bounds(day)
-            events = store.events_for_day(day, limit=limit)
+            events = store.events_for_day(day, limit=lim)
     except ValueError as exc:
         print(f"sense day: {exc}", file=sys.stderr)
         return 2
@@ -210,16 +215,12 @@ def cmd_day(db_path: Path, *, day: str | None, as_json: bool, limit: int) -> int
             row = {"ts": e.ts, "kind": e.kind, "payload": e.payload}
             print(json.dumps(row, ensure_ascii=False))
     else:
-        label = day or "today"
-        print(f"sense day ({label})  {start} → {end}  n={len(events)}")
+        print(f"sense day ({day or 'today'})  {start} → {end}  n={len(events)}")
         for e in events:
-            summary = _summarize(e.kind, e.payload)
-            print(f"{e.ts}  {e.kind:24}  {summary}")
-        if len(events) >= limit:
-            print(
-                f"(capped at {limit}; use `sense recap` for a compiled day summary)",
-                file=sys.stderr,
-            )
+            print(f"{e.ts}  {e.kind:24}  {_summarize(e.kind, e.payload)}")
+        if len(events) >= lim:
+            msg = f"(capped at {lim}; use `sense recap` for a compiled day summary)"
+            print(msg, file=sys.stderr)
     return 0
 
 

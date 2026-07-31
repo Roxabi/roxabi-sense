@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from typing import Any
 
 from roxabi_sense.collectors import (
@@ -14,6 +13,7 @@ from roxabi_sense.collectors import (
     ProcessPresenceCollector,
     TmuxSessionsCollector,
 )
+from roxabi_sense.collectors.base import Collector
 from roxabi_sense.collectors.idle_facts import append_idle_transition
 from roxabi_sense.collectors.idle_watch import SOURCE as WAYLAND_IDLE_SOURCE
 from roxabi_sense.config import SenseConfig
@@ -22,31 +22,6 @@ from roxabi_sense.store import Store
 
 def _utc_stamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-@dataclass
-class FocusEventGate:
-    """Leading + trailing rate limit for event-driven focus probes."""
-
-    min_interval: float
-    last_probe: float = 0.0
-    trailing_at: float | None = None
-
-    def on_event(self, now: float) -> bool:
-        """True → probe now. False → trailing scheduled at trailing_at."""
-        if now - self.last_probe >= self.min_interval:
-            self.last_probe = now
-            self.trailing_at = None
-            return True
-        self.trailing_at = self.last_probe + self.min_interval
-        return False
-
-    def on_timer(self, now: float) -> bool:
-        if self.trailing_at is not None and now >= self.trailing_at:
-            self.last_probe = now
-            self.trailing_at = None
-            return True
-        return False
 
 
 def handle_idle_msg(
@@ -98,8 +73,8 @@ def build_poll_collectors(
     cfg: SenseConfig,
     *,
     logind_idle: bool = True,
-) -> list[Any]:
-    collectors: list[Any] = []
+) -> list[Collector]:
+    collectors: list[Collector] = []
     if cfg.agent_sessions:
         collectors.append(AgentSessionsCollector())
     if cfg.process_presence:
@@ -113,7 +88,7 @@ def build_poll_collectors(
     return collectors
 
 
-def build_collectors(cfg: SenseConfig) -> list[Any]:
+def build_collectors(cfg: SenseConfig) -> list[Collector]:
     use_logind = cfg.idle and cfg.idle_backend in {"logind", "auto"}
     cols = build_poll_collectors(cfg, logind_idle=use_logind)
     if cfg.focus:
@@ -121,7 +96,7 @@ def build_collectors(cfg: SenseConfig) -> list[Any]:
     return cols
 
 
-def tick_all(collectors: list[Any], store: Store) -> int:
+def tick_all(collectors: list[Collector], store: Store) -> int:
     wrote = 0
     with store.batch():
         for c in collectors:
@@ -136,7 +111,7 @@ def tick_all(collectors: list[Any], store: Store) -> int:
 
 
 def tick_one(
-    collector: Any,
+    collector: Collector,
     store: Store,
     *,
     label: str,

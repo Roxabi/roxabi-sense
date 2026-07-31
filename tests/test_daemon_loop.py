@@ -107,22 +107,3 @@ def test_config_focus_lighten_defaults() -> None:
     assert cfg.focus_name_events == "throttled"
     assert cfg.focus_name_throttle_s == 10.0
     assert cfg.focus_event_min_interval_s == 0.5
-
-
-def test_focus_event_gate_leading_and_trailing() -> None:
-    from roxabi_sense.daemon_collectors import FocusEventGate
-
-    g = FocusEventGate(min_interval=0.5)
-    assert g.on_event(1.0) is True
-    assert g.trailing_at is None
-    # burst inside window → schedule trailing, no immediate probe
-    assert g.on_event(1.1) is False
-    assert g.trailing_at == 1.5
-    assert g.on_event(1.2) is False
-    assert g.trailing_at == 1.5
-    # before trailing deadline
-    assert g.on_timer(1.4) is False
-    # trailing fires once
-    assert g.on_timer(1.5) is True
-    assert g.trailing_at is None
-    assert g.on_timer(1.6) is False

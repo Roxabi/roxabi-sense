@@ -56,3 +56,11 @@ def test_day_invalid_date(tmp_path: Path, monkeypatch, capsys) -> None:
 
 def test_mcp_not_implemented() -> None:
     assert main(["mcp"]) == 2
+
+
+def test_bad_config_exits_2(tmp_path: Path, monkeypatch, capsys) -> None:
+    bad = tmp_path / "bad.toml"
+    bad.write_text("[[[not valid", encoding="utf-8")
+    monkeypatch.setenv("SENSE_DB", str(tmp_path / "x.db"))
+    assert main(["--config", str(bad), "status"]) == 2
+    assert "invalid config" in capsys.readouterr().err

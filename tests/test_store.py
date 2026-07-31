@@ -79,3 +79,30 @@ def test_meta_and_empty(tmp_path: Path) -> None:
     store.set_meta("a", "1")
     assert store.get_meta("a") == "1"
     store.close()
+
+
+def test_corrupt_payload_does_not_crash(tmp_path: Path) -> None:
+    import sqlite3
+
+    db = tmp_path / "s.db"
+    store = Store(db)
+    store.append("idle", {"idle": False})
+    store.close()
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE events SET payload = 'NOT-JSON{' WHERE id = 1")
+    conn.commit()
+    conn.close()
+    with Store(db) as store2:
+        last = store2.last_event()
+        assert last is not None
+        assert last.payload.get("_corrupt") is True
+        assert store2.count() == 1
+
+
+def test_clamp_event_limit() -> None:
+    from roxabi_sense.store import MAX_EVENT_LIMIT, clamp_event_limit
+
+    assert clamp_event_limit(0) == 1
+    assert clamp_event_limit(-5) == 1
+    assert clamp_event_limit(10) == 10
+    assert clamp_event_limit(999_999) == MAX_EVENT_LIMIT
