@@ -174,3 +174,78 @@ def test_list_tmux_agent_panes_error(monkeypatch) -> None:
 
 def test_find_agent_link_none_without_signals() -> None:
     assert al.find_agent_link(None) is None
+
+
+def test_tmux_child_pid_join(monkeypatch) -> None:
+    """Ghostty has no agent descendants; join via tmux pane shell → session pid."""
+    sessions = [
+        {
+            "agent": "grok",
+            "session_id": "sess-tmux",
+            "pid": 500,
+            "cwd": "/home/m/proj",
+        }
+    ]
+    panes = [
+        {
+            "pane_pid": 400,  # shell in pane
+            "command": "grok",
+            "path": "/home/m/other",
+            "attached": True,
+        }
+    ]
+    tree = {400: [500]}
+    monkeypatch.setattr(al, "list_tmux_agent_panes", lambda: panes)
+
+    def fake_desc(root, limit=200, tree=None):
+        return [500] if root == 400 else []
+
+    monkeypatch.setattr(al, "descendants", fake_desc)
+    monkeypatch.setattr(al, "children_map", lambda: tree)
+    link = al.find_agent_link(
+        7280,  # ghostty — no agent under it
+        app="ghostty",
+        title="proj - grok",
+        sessions=sessions,
+        tree={},
+        panes=panes,
+    )
+    assert link is not None
+    assert link["session_id"] == "sess-tmux"
+    assert link["match"] == "tmux_child_pid"
+
+
+def test_find_agent_link_reuses_passed_panes(monkeypatch) -> None:
+    """Batch enrich: caller passes panes → list_tmux not re-invoked."""
+    calls = {"n": 0}
+
+    def boom():
+        calls["n"] += 1
+        raise AssertionError("list_tmux_agent_panes should not run when panes= given")
+
+    monkeypatch.setattr(al, "list_tmux_agent_panes", boom)
+    monkeypatch.setattr(al, "descendants", lambda *a, **k: [])
+    monkeypatch.setattr(al, "children_map", lambda: {})
+    sessions = [
+        {"agent": "grok", "session_id": "s1", "pid": 100, "cwd": "/home/m/proj"},
+    ]
+    panes = [
+        {
+            "pane_pid": 100,
+            "command": "grok",
+            "path": "/home/m/proj",
+            "attached": True,
+        }
+    ]
+    for _ in range(3):
+        link = al.find_agent_link(
+            1,
+            app="ghostty",
+            title="proj - grok",
+            sessions=sessions,
+            tree={},
+            panes=panes,
+        )
+        assert link is not None
+        assert link["session_id"] == "s1"
+    assert calls["n"] == 0
