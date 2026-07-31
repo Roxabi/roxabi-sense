@@ -47,13 +47,32 @@ _NAME_THROTTLE_MS = {throttle_ms}
 _pending = False
 _pending_reason = "activate"
 _last_name_emit = 0.0
+_name_trail_scheduled = False
 
 def _flush():
-    global _pending, _pending_reason
+    global _pending, _pending_reason, _last_name_emit
     reason = _pending_reason
     _pending = False
     _pending_reason = "activate"
+    if reason == "name":
+        _last_name_emit = time.monotonic() * 1000.0
     print(json.dumps({{"type": "focus_change", "source": "atspi", "reason": reason}}), flush=True)
+    return False
+
+def _arm(reason: str) -> None:
+    global _pending, _pending_reason
+    if _pending:
+        if reason == "activate":
+            _pending_reason = "activate"
+        return
+    _pending = True
+    _pending_reason = reason
+    GLib.timeout_add(80, _flush)
+
+def _name_trail_flush():
+    global _name_trail_scheduled
+    _name_trail_scheduled = False
+    _arm("name")
     return False
 
 def _event_reason(event) -> str:
@@ -66,24 +85,22 @@ def _event_reason(event) -> str:
     return "activate"
 
 def on_event(event):
-    global _pending, _pending_reason, _last_name_emit
+    global _name_trail_scheduled
     reason = _event_reason(event)
     if reason == "name":
         if _NAME_MODE == "off":
             return
         if _NAME_MODE == "throttled":
             now = time.monotonic() * 1000.0
-            if now - _last_name_emit < _NAME_THROTTLE_MS:
-                return
-            _last_name_emit = now
-    if _pending:
-        # Prefer activate over name if both coalesce in the same window.
-        if reason == "activate":
-            _pending_reason = "activate"
-        return
-    _pending = True
-    _pending_reason = reason
-    GLib.timeout_add(80, _flush)
+            if now - _last_name_emit >= _NAME_THROTTLE_MS:
+                _arm("name")
+            elif not _name_trail_scheduled:
+                # Trailing edge: flush once at end of throttle window.
+                _name_trail_scheduled = True
+                rem = max(1, int(_NAME_THROTTLE_MS - (now - _last_name_emit)))
+                GLib.timeout_add(rem, _name_trail_flush)
+            return
+    _arm(reason)
 
 try:
     Atspi.init()

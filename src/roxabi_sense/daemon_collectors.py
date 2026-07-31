@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from roxabi_sense.collectors import (
@@ -21,6 +22,31 @@ from roxabi_sense.store import Store
 
 def _utc_stamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+@dataclass
+class FocusEventGate:
+    """Leading + trailing rate limit for event-driven focus probes."""
+
+    min_interval: float
+    last_probe: float = 0.0
+    trailing_at: float | None = None
+
+    def on_event(self, now: float) -> bool:
+        """True → probe now. False → trailing scheduled at trailing_at."""
+        if now - self.last_probe >= self.min_interval:
+            self.last_probe = now
+            self.trailing_at = None
+            return True
+        self.trailing_at = self.last_probe + self.min_interval
+        return False
+
+    def on_timer(self, now: float) -> bool:
+        if self.trailing_at is not None and now >= self.trailing_at:
+            self.last_probe = now
+            self.trailing_at = None
+            return True
+        return False
 
 
 def handle_idle_msg(

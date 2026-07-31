@@ -12,6 +12,7 @@ from roxabi_sense.collectors.focus_watch import FocusAtspiWatch
 from roxabi_sense.collectors.idle_watch import IdleWatch
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.daemon_collectors import (  # noqa: F401 — re-export for tests
+    FocusEventGate,
     _utc_stamp,
     build_collectors,
     build_poll_collectors,
@@ -36,12 +37,11 @@ def run_daemon(cfg: SenseConfig) -> int:
     idle_q: queue.Queue[dict[str, Any]] = queue.Queue()
     watch: FocusAtspiWatch | None = None
     idle_watch: IdleWatch | None = None
-    last_focus_event_probe = 0.0
     wayland_healthy = False
     idle_respawn_at = 0.0
     idle_backoff = _IDLE_RESPAWN_BASE_S
     last_activity_ts: str | None = None
-    event_min = max(0.05, float(cfg.focus_event_min_interval_s))
+    focus_gate = FocusEventGate(min_interval=max(0.05, float(cfg.focus_event_min_interval_s)))
 
     def _stop(*_args: object) -> None:
         nonlocal stop
@@ -132,11 +132,27 @@ def run_daemon(cfg: SenseConfig) -> int:
                 flush=True,
             )
 
+        def _run_focus_event_probe() -> None:
+            nonlocal last_activity_ts
+            if focus is None:
+                return
+            n = tick_one(focus, store, label="focus_atspi/event", method="tick_focus")
+            store.set_meta("last_tick", _utc_stamp())
+            last_activity_ts = _utc_stamp()
+            if n:
+                store.set_meta("last_focus_source", "event")
+                print(
+                    f"sense focus-event: +{n} (total={store.count()})",
+                    flush=True,
+                )
+
         while not stop:
             now = time.monotonic()
             deadlines = [next_poll]
             if events_enabled and focus is not None:
                 deadlines.append(next_focus_backup)
+                if focus_gate.trailing_at is not None:
+                    deadlines.append(focus_gate.trailing_at)
             if idle_respawn_at > 0:
                 deadlines.append(idle_respawn_at)
             wait = max(0.05, min(deadlines) - now)
@@ -150,21 +166,17 @@ def run_daemon(cfg: SenseConfig) -> int:
                         break
                 if focus is not None and events_enabled:
                     now = time.monotonic()
-                    if now - last_focus_event_probe >= event_min:
-                        last_focus_event_probe = now
-                        n = tick_one(
-                            focus, store, label="focus_atspi/event", method="tick_focus"
-                        )
-                        store.set_meta("last_tick", _utc_stamp())
-                        last_activity_ts = _utc_stamp()
-                        store.set_meta("last_focus_source", "event")
-                        if n:
-                            print(
-                                f"sense focus-event: +{n} (total={store.count()})",
-                                flush=True,
-                            )
+                    if focus_gate.on_event(now):
+                        _run_focus_event_probe()
             except queue.Empty:
                 pass
+
+            if (
+                events_enabled
+                and focus is not None
+                and focus_gate.on_timer(time.monotonic())
+            ):
+                _run_focus_event_probe()
 
             while True:
                 try:
@@ -234,8 +246,8 @@ def run_daemon(cfg: SenseConfig) -> int:
                     focus, store, label="focus_atspi/desktop", method="tick_desktop"
                 )
                 store.set_meta("last_tick", _utc_stamp())
-                store.set_meta("last_focus_source", "backup")
                 if n:
+                    store.set_meta("last_focus_source", "backup")
                     print(
                         f"sense focus-desktop: +{n} (total={store.count()})",
                         flush=True,

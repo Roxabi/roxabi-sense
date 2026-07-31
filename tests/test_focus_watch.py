@@ -16,6 +16,9 @@ def test_build_listener_script_name_modes() -> None:
     assert "_NAME_THROTTLE_MS = 10000" in throttled
     assert "if True:" in throttled
     assert "accessible-name" in throttled
+    # leading + trailing throttle (not drop-only)
+    assert "_name_trail_flush" in throttled
+    assert "_name_trail_scheduled" in throttled
 
     on = build_listener_script(name_events="on", name_throttle_s=1.0)
     assert "_NAME_MODE = 'on'" in on

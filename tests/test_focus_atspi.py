@@ -102,6 +102,43 @@ def test_tick_focus_skips_desktop_snapshot(tmp_path: Path, monkeypatch) -> None:
     store.close()
 
 
+def test_tick_focus_uses_probe_focus_not_probe(tmp_path: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    def desktop() -> list[WindowInfo]:
+        calls.append("desktop")
+        return [
+            WindowInfo(app="ghostty", title="A", active=True, role="frame", pid=1),
+            WindowInfo(app="slack", title="B", active=False, role="frame", pid=2),
+        ]
+
+    def focus_only() -> list[WindowInfo]:
+        calls.append("focus")
+        return [WindowInfo(app="ghostty", title="A", active=True, role="frame", pid=1)]
+
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        lambda app, pid: app,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus_atspi.children_map",
+        lambda: {},
+    )
+    store = Store(tmp_path / "s.db")
+    c = FocusAtspiCollector(
+        probe=desktop, probe_focus=focus_only, sessions_loader=lambda: []
+    )
+    assert c.tick_focus(store) == 1
+    assert calls == ["focus"]
+    assert c.tick_desktop(store) >= 1
+    assert calls == ["focus", "desktop"]
+    store.close()
+
+
 def test_tick_desktop_writes_snapshot(tmp_path: Path, monkeypatch) -> None:
     state = {"bg": "chan-a"}
 
