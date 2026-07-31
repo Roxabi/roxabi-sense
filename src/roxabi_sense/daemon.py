@@ -236,6 +236,12 @@ def run_daemon(cfg: SenseConfig) -> int:
                 if agent is not None and agent.running:
                     next_desktop = now + cfg.focus_backup_seconds
                     atspi_backoff = _ATSPI_RESPAWN_BASE_S
+                else:
+                    # Start failed (Popen/OSError) — keep poll, retry with backoff.
+                    events_enabled = False
+                    focus_on_poll = True
+                    atspi_respawn_at = now + atspi_backoff
+                    atspi_backoff = min(_ATSPI_RESPAWN_MAX_S, atspi_backoff * 2)
 
             if now >= next_poll:
                 cols = list(poll_collectors)
