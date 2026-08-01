@@ -15,6 +15,7 @@ from roxabi_sense.install_service import unit_path
 from roxabi_sense.paths import default_config_path
 from roxabi_sense.report import load_status_snapshot
 from roxabi_sense.report.presence import age_seconds
+from roxabi_sense.store import SCHEMA_VERSION, SchemaVersionError
 
 CheckStatus = Literal["ok", "warn", "fail"]
 
@@ -143,11 +144,21 @@ def _check_db(db_path: Path) -> Check:
 
 
 def _check_store_and_presence(cfg: SenseConfig) -> list[Check]:
-    snap = load_status_snapshot(
-        cfg.db_path,
-        offline_threshold_s=cfg.offline_threshold_s,
-        idle_threshold_s=cfg.idle_threshold_s,
-    )
+    try:
+        snap = load_status_snapshot(
+            cfg.db_path,
+            offline_threshold_s=cfg.offline_threshold_s,
+            idle_threshold_s=cfg.idle_threshold_s,
+        )
+    except SchemaVersionError as exc:
+        return [
+            Check(
+                name="schema",
+                status="fail",
+                detail=str(exc),
+                hint="upgrade: uv tool install -e '.[mcp]' --force  (durable clone)",
+            )
+        ]
     if not snap.db_exists:
         return [
             Check(
@@ -165,11 +176,16 @@ def _check_store_and_presence(cfg: SenseConfig) -> list[Check]:
         ]
     out: list[Check] = [
         Check(
+            name="schema",
+            status="ok",
+            detail=f"schema_version={SCHEMA_VERSION} (package)",
+        ),
+        Check(
             name="events",
             status="ok" if snap.events > 0 else "warn",
             detail=f"count={snap.events}",
             hint=None if snap.events > 0 else "store empty — wait for ticks or sense once",
-        )
+        ),
     ]
     age = age_seconds(snap.last_tick)
     thr = cfg.offline_threshold_s

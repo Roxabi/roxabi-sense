@@ -34,3 +34,5 @@ Canonical: **[`adr/001-axis-of-decomposition.md`](adr/001-axis-of-decomposition.
 | ADR | Title |
 |-----|-------|
 | [001](adr/001-axis-of-decomposition.md) | Axis of Decomposition |
+| [002](adr/002-presence-and-idle.md) | Presence state and idle authority |
+| [003](adr/003-schema-version-and-sync.md) | Schema version + edge→cloud sync |
