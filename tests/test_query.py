@@ -77,3 +77,44 @@ def test_from_config_mcp_detail(tmp_path: Path) -> None:
 def test_day_recap_missing(tmp_path: Path) -> None:
     q = SenseQuery(db_path=tmp_path / "no.db", offline_threshold_s=1, idle_threshold_s=1)
     assert q.day_recap()["error"] == "db_missing"
+
+
+def test_day_recap_coarse_strips_titles_and_media(tmp_path: Path) -> None:
+    """ADR-002: top_titles are positional tuples — must not leak under coarse."""
+    db = tmp_path / "s.db"
+    secret = "SECRET-MEET-TITLE"
+    with Store(db) as store:
+        store.append(
+            "focus",
+            {"app": "Google Chrome", "title": secret, "active": True},
+        )
+        store.append(
+            "media_snapshot",
+            {
+                "players": [
+                    {
+                        "player": "spotify",
+                        "artist": "X",
+                        "title": "SECRET-SONG",
+                        "status": "Playing",
+                    }
+                ]
+            },
+        )
+        store.set_meta("last_tick", "2026-08-01T12:00:00Z")
+    q = SenseQuery(db_path=db, offline_threshold_s=120, idle_threshold_s=300, detail="coarse")
+    body = q.day_recap()
+    blob = str(body)
+    assert secret not in blob
+    assert "SECRET-SONG" not in blob
+    assert body.get("top_titles") == []
+    assert body.get("media") == []
+
+
+def test_invalid_day_stable_error(tmp_path: Path) -> None:
+    db = tmp_path / "s.db"
+    Store(db).close()
+    q = SenseQuery(db_path=db, offline_threshold_s=1, idle_threshold_s=1)
+    out = q.what_was_i_doing(day="not-a-date")
+    assert out["error"] == "invalid_day"
+

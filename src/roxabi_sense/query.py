@@ -31,6 +31,7 @@ _COARSE_DROP_KEYS = frozenset(
         "album",
         "url",
         "uri",
+        "meeting_label",  # often derived from window titles
     }
 )
 
@@ -121,20 +122,30 @@ class SenseQuery:
                 "events": [],
                 "error": "db_missing",
             }
-        with Store(self.db_path) as store:
-            start, end = store.day_bounds(day)
-            events = store.events_for_day(day, limit=lim)
+        try:
+            with Store(self.db_path) as store:
+                start, end = store.day_bounds(day)
+                events = store.events_for_day(day, limit=lim)
+        except ValueError as exc:
+            return {
+                "db_exists": True,
+                "day": day,
+                "start": None,
+                "end": None,
+                "events": [],
+                "error": "invalid_day",
+                "message": str(exc),
+            }
         rows: list[dict[str, Any]] = []
         for e in events:
+            payload = e.payload if self.detail == "full" else _redact_obj(e.payload)
             row: dict[str, Any] = {
                 "ts": e.ts,
                 "kind": e.kind,
-                "summary": summarize_event(e.kind, e.payload),
+                "summary": summarize_event(e.kind, payload if isinstance(payload, dict) else {}),
             }
             if self.detail == "full":
                 row["payload"] = e.payload
-            else:
-                row["summary"] = summarize_event(e.kind, _redact_obj(e.payload))
             rows.append(row)
         return {
             "db_exists": True,
@@ -176,11 +187,25 @@ class SenseQuery:
         """Compiled day recap JSON (bonus tool; same product as CLI recap)."""
         if not self.db_path.is_file():
             return {"db_exists": False, "day": day, "error": "db_missing"}
-        with Store(self.db_path) as store:
-            recap = compile_day_recap(store, day)
+        try:
+            with Store(self.db_path) as store:
+                recap = compile_day_recap(store, day)
+        except ValueError as exc:
+            return {
+                "db_exists": True,
+                "day": day,
+                "error": "invalid_day",
+                "message": str(exc),
+            }
         body = recap.to_dict()
         body["db_exists"] = True
-        return _redact_obj(body) if self.detail == "coarse" else body
+        if self.detail == "full":
+            return body
+        # Coarse: key redaction + drop positional title/media firehoses (asdict tuples)
+        body = _redact_obj(body)
+        body["top_titles"] = []
+        body["media"] = []
+        return body
 
 
 def _redact_obj(obj: Any) -> Any:
