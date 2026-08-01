@@ -14,8 +14,10 @@ from roxabi_sense.report.status import (
     status_snapshot,
     status_snapshot_missing,
 )
+from roxabi_sense.report.top_apps import AppDwell, session_shape, top_apps
 
 __all__ = [
+    "AppDwell",
     "DayRecap",
     "Presence",
     "StatusSnapshot",
@@ -25,7 +27,9 @@ __all__ = [
     "format_presence_lines",
     "load_status_snapshot",
     "presence_from_store",
+    "session_shape",
     "status_snapshot",
     "status_snapshot_missing",
     "summarize_event",
+    "top_apps",
 ]

@@ -21,6 +21,7 @@ def test_tool_catalog_http_mapping() -> None:
         "what_was_i_doing",
         "agent_sessions",
         "day_recap",
+        "top_apps",
     }
     for t in tool_catalog():
         assert t["http"].startswith("GET /v1/")
@@ -37,4 +38,5 @@ def test_build_mcp_server_registers_tools(tmp_path: Path) -> None:
         "what_was_i_doing",
         "agent_sessions",
         "day_recap",
+        "top_apps",
     }

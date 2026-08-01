@@ -207,6 +207,37 @@ class SenseQuery:
         body["media"] = []
         return body
 
+    def top_apps(self, day: str | None = None, *, limit: int = 20) -> dict[str, Any]:
+        """Ranked app dwell for a local day (seconds + minutes). App names only."""
+        if not self.db_path.is_file():
+            return {
+                "db_exists": False,
+                "day": day,
+                "apps": [],
+                "error": "db_missing",
+            }
+        try:
+            with Store(self.db_path) as store:
+                recap = compile_day_recap(store, day)
+        except ValueError as exc:
+            return {
+                "db_exists": True,
+                "day": day,
+                "apps": [],
+                "error": "invalid_day",
+                "message": str(exc),
+            }
+        apps = [a.to_dict() for a in recap.top_apps[: max(1, limit)]]
+        return {
+            "db_exists": True,
+            "day": recap.day,
+            "start": recap.start,
+            "end": recap.end,
+            "session_shape": recap.session_shape,
+            "tracked_seconds": round(sum(a.seconds for a in recap.top_apps), 1),
+            "apps": apps,
+        }
+
 
 def _redact_obj(obj: Any) -> Any:
     """Deep redact for coarse export (titles, media, absolute paths)."""
