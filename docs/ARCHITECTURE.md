@@ -83,18 +83,31 @@ It does **not** call an external MCP.
 Default redaction: **coarse** (no titles / media / full paths). Operator may set
 `[mcp] detail = "full"` in config — **not** via tool arguments (ADR-002).
 
-```bash
-# agent host (Claude / Grok)
-# mcpServers.sense.command = ["uv", "run", "--extra", "mcp", "--directory", "...", "sense", "mcp"]
-uv sync --extra mcp
-uv run sense mcp   # stdio
+#### Install layers (do not collapse)
 
-# remote MCP later (same tools): MCPServer.run(transport="streamable-http")
+| Layer | Process | Install |
+|-------|---------|---------|
+| Data plane | `sense daemon` / systemd `--user` | `sense install-service` + enable unit |
+| Query plane | `sense` CLI + `sense mcp` stdio | `uv tool install -e '.[mcp]'` → `sense` on PATH |
+| Agent DX | host MCP config | `command = "sense"`, `args = ["mcp"]` (no worktree path) |
+
+```bash
+# PATH-stable (operator machines) — preferred for agent spawn
+uv tool install -e '.[mcp]'          # from clone; use --force after upgrades
+# After release: uv tool install 'roxabi-sense[mcp]'
+sense install-service && systemctl --user enable --now roxabi-sense.service
+sense mcp                            # stdio MCP server
+
+# Dev-only (do not put clone paths in production agent configs):
+# uv run --extra mcp --directory /path/to/clone sense mcp
+
+# remote MCP later (same tools): MCPServer.run(transport="streamable-http") + auth
 ```
 
 **Cloudflare path (later):** reimplement `SenseQuery` contracts against D1/R2 (or
 mirror store); expose Workers MCP/HTTP with the same tool names and JSON shapes.
 Collectors stay on the workstation; cloud holds durable query replica if needed.
+Local stdio MCP remains for offline / workstation agents.
 
 ## Collectors priority
 
@@ -113,7 +126,7 @@ Focus failure must not block agent-session collection.
 | Packaging | `uv` + hatchling, single package `roxabi-sense` | Same as small satellites |
 | Runtime | `systemd --user` unit | Laptop/M₂ session lifecycle |
 | DB | SQLite WAL | Local-first, zero ops |
-| MCP | stdio server (sdk TBD at implement) | Agent-native |
+| MCP | stdio server (`mcp` optional extra, `SenseQuery` tools) | Agent-native |
 | NATS | optional extra + contracts later | Sentinelle plane ① |
 | HTTP UI | not V1 | Avoid fake product surface |
 
