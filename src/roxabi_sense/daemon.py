@@ -102,8 +102,12 @@ def run_daemon(cfg: SenseConfig) -> int:
         return idle_watch
 
     use_wl = want_wayland_idle(cfg)
-    poll_collectors = build_poll_collectors(
-        cfg, logind_idle=want_logind_idle(cfg, wayland_healthy=False)
+    logind_boot = want_logind_idle(cfg, wayland_healthy=False)
+    poll_collectors = build_poll_collectors(cfg, logind_idle=logind_boot)
+    from roxabi_sense.collectors.idle_meta import write_idle_meta
+
+    write_idle_meta(
+        store, cfg, wayland_healthy=False, logind_active=logind_boot
     )
     mode = "events+desktop" if (focus and cfg.focus_events) else ("poll" if focus else "off")
     print(
@@ -121,6 +125,10 @@ def run_daemon(cfg: SenseConfig) -> int:
     try:
         if use_wl:
             _start_idle_watch()
+        else:
+            write_idle_meta(
+                store, cfg, wayland_healthy=False, logind_active=logind_boot
+            )
         run_main_loop(
             cfg=cfg,
             store=store,

@@ -110,15 +110,28 @@ def run_main_loop(
                 msg = idle_q.get_nowait()
             except queue.Empty:
                 break
-            handle_idle_msg(msg, store=store, cfg=cfg, last_activity_ts=last_activity_ts)
             typ = msg.get("type")
+            logind_on = False
             if typ == "ready":
                 idle_backoff = _IDLE_RESPAWN_BASE_S
+                logind_on = want_logind_idle(cfg, wayland_healthy=True)
                 poll_collectors[:] = build_poll_collectors(
-                    cfg, logind_idle=want_logind_idle(cfg, wayland_healthy=True)
+                    cfg, logind_idle=logind_on
+                )
+            elif typ == "error":
+                logind_on = want_logind_idle(cfg, wayland_healthy=False)
+                poll_collectors[:] = build_poll_collectors(
+                    cfg, logind_idle=logind_on
                 )
             elif typ == "idle" and msg.get("idle") is False:
                 last_activity_ts = _utc_stamp()
+            handle_idle_msg(
+                msg,
+                store=store,
+                cfg=cfg,
+                last_activity_ts=last_activity_ts,
+                logind_active=logind_on,
+            )
 
         if stop_flag():
             break
@@ -130,9 +143,13 @@ def run_main_loop(
             and not idle_watch.running
             and idle_respawn_at <= 0
         ):
+            from roxabi_sense.collectors.idle_meta import write_idle_meta
+
             store.set_meta("idle_watch", "dead")
-            poll_collectors[:] = build_poll_collectors(
-                cfg, logind_idle=want_logind_idle(cfg, wayland_healthy=False)
+            logind_on = want_logind_idle(cfg, wayland_healthy=False)
+            poll_collectors[:] = build_poll_collectors(cfg, logind_idle=logind_on)
+            write_idle_meta(
+                store, cfg, wayland_healthy=False, logind_active=logind_on
             )
             idle_respawn_at = now + idle_backoff
             print(
