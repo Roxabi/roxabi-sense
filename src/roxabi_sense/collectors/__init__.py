@@ -1,6 +1,7 @@
 """Signal collectors (primary axis)."""
 
 from roxabi_sense.collectors.agent_sessions import AgentSessionsCollector
+from roxabi_sense.collectors.cursor_sessions import CursorSessionsCollector
 from roxabi_sense.collectors.focus import FocusAtspiCollector, FocusCollector
 from roxabi_sense.collectors.idle import IdleCollector
 from roxabi_sense.collectors.mpris import MprisCollector
@@ -11,6 +12,7 @@ from roxabi_sense.collectors.tmux_sessions import TmuxSessionsCollector
 
 __all__ = [
     "AgentSessionsCollector",
+    "CursorSessionsCollector",
     "FocusAtspiCollector",
     "FocusCollector",
     "IdleCollector",

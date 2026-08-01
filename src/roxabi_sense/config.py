@@ -57,6 +57,11 @@ class SenseConfig:
     mpris: bool = True
     tmux: bool = True
     focus: bool = True
+    # Opt-in RO Cursor workspace discovery (#49) — off by default
+    cursor_sessions: bool = False
+    cursor_root: Path | None = None  # default ~/.config/Cursor
+    cursor_max_workspaces: int = 20
+    cursor_max_age_days: float = 30.0
     process_names: tuple[str, ...] = DEFAULT_PROCESS_NAMES
     machine: str = "laptop"
     # MCP / query export detail — ADR-002: full only via config, not tool args
@@ -130,6 +135,7 @@ def _apply_toml(cfg: SenseConfig, data: dict) -> None:
         "mpris",
         "tmux",
         "focus",
+        "cursor_sessions",
     ):
         if key in collectors:
             setattr(cfg, key, bool(collectors[key]))
@@ -137,6 +143,12 @@ def _apply_toml(cfg: SenseConfig, data: dict) -> None:
         cfg.idle_backend = str(collectors["idle_backend"]).lower()
     if "idle_threshold_s" in collectors:
         cfg.idle_threshold_s = float(collectors["idle_threshold_s"])
+    if "cursor_root" in collectors:
+        cfg.cursor_root = Path(str(collectors["cursor_root"]))
+    if "cursor_max_workspaces" in collectors:
+        cfg.cursor_max_workspaces = int(collectors["cursor_max_workspaces"])
+    if "cursor_max_age_days" in collectors:
+        cfg.cursor_max_age_days = float(collectors["cursor_max_age_days"])
     if "process_names" in collectors:
         raw_names = collectors["process_names"]
         if not isinstance(raw_names, list | tuple):
