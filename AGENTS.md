@@ -99,7 +99,8 @@ uv run pytest && uv run ruff check && uv run pyright
 
 DB default: `~/.local/share/roxabi-sense/sense.db` (override `SENSE_DB`)  
 Config: `~/.config/roxabi-sense/config.toml`  
-Install matrix: README § Install matrix · Host MCP: README § MCP host registration · ARCHITECTURE MCP section
+Install matrix: README § Install matrix · Host MCP: README § MCP host registration · ARCHITECTURE MCP section  
+Schema / sync: `docs/architecture/adr/003-schema-version-and-sync.md` (`meta.schema_version`)
 
 ## Layout (query — do not invent)
 

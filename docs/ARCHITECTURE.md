@@ -46,6 +46,12 @@ Daemon **liveness** is `meta.last_tick` (and related meta keys), **not** a perio
 
 Store path: `~/.local/share/roxabi-sense/sense.db` (override via env / config).
 
+### Schema version + multi-plane sync
+
+Local SQLite is versioned via `meta.schema_version` (package constant `SCHEMA_VERSION` in `store/migrate.py`). On open, the store applies ordered migrations and **refuses** a DB newer than the package (fail closed).
+
+Edge → cloud sync (query replica, not capture replacement) uses a language-agnostic envelope (`sync_protocol_version`, `host_id`, event `local_id` cursor, `payload_class` coarse|full). Default export is **coarse** (ADR-002). Full design: [`adr/003-schema-version-and-sync.md`](architecture/adr/003-schema-version-and-sync.md). Cloudflare implementers: issue #30.
+
 ## NATS (optional, phase 4)
 
 | Subject (target) | When | Payload intent |
@@ -113,10 +119,10 @@ sense mcp                            # stdio MCP server
 # remote MCP later (same tools): MCPServer.run(transport="streamable-http") + auth
 ```
 
-**Cloudflare path (later):** reimplement `SenseQuery` contracts against D1/R2 (or
-mirror store); expose Workers MCP/HTTP with the same tool names and JSON shapes.
-Collectors stay on the workstation; cloud holds durable query replica if needed.
-Local stdio MCP remains for offline / workstation agents.
+**Cloudflare path (later, #30):** ingest versioned edge batches (ADR-003 envelope)
+into D1/R2; reimplement `SenseQuery` contracts against the replica; expose
+Workers MCP/HTTP with the same tool names and JSON shapes + auth. Collectors
+stay on the workstation. Local stdio MCP remains for offline / workstation agents (#31).
 
 ## Collectors priority
 

@@ -12,6 +12,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
+from roxabi_sense.store.migrate import migrate
 from roxabi_sense.util.time import to_z, utc_now_z
 
 SCHEMA = """
@@ -92,11 +93,18 @@ class Store:
             pass
         self._conn = sqlite3.connect(self.path, check_same_thread=True)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.execute("PRAGMA busy_timeout=5000")
-        self._conn.executescript(SCHEMA)
-        self._conn.commit()
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn.execute("PRAGMA busy_timeout=5000")
+            self._conn.executescript(SCHEMA)
+            self._conn.commit()
+            # Version gate + ordered migrations (ADR-003). Raises SchemaVersionError
+            # if the DB is newer than this package.
+            migrate(self._conn)
+        except Exception:
+            self._conn.close()
+            raise
         self._harden_files()
         self._batch_depth = 0
 
