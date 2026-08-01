@@ -273,9 +273,28 @@ Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. Fa
 - Meta focus: `focus_backend`, `focus_status`, `session_type`, `desktop_family`, `last_focus_path`.
 - Meta idle: `idle_backend`, `idle_status`, `idle_chain_reason` (wayland → logind → noop).
 
+### Agent sessions (Grok / Claude / optional Cursor)
+
+| Source | Default | Paths (read-only) |
+|--------|---------|-------------------|
+| Grok | on (`agent_sessions`) | `~/.grok/active_sessions.json` |
+| Claude | on (`agent_sessions`) | `~/.claude/sessions/*.json` |
+| Cursor | **off** (`cursor_sessions = true`) | `~/.config/Cursor/User/workspaceStorage/*/workspace.json` |
+
+Cursor opt-in emits `agent_sessions_snapshot` with `agent=cursor` (workspace id + folder path + mtime only). **Never** opens chat DBs (`state.vscdb`), composer history, or rewrites agent dirs.
+
+```toml
+# ~/.config/roxabi-sense/config.toml
+[collectors]
+cursor_sessions = true
+# cursor_root = "/home/you/.config/Cursor"   # optional override
+# cursor_max_workspaces = 20
+# cursor_max_age_days = 30
+```
+
 Agent status detail: [`AGENTS.md`](./AGENTS.md) § Status.
 
-Out of scope forever (for this repo): OCR, continuous screenshots, keylogging, clipboard dumps, scraping Slack/Discord desktop clients, meeting transcription.
+Out of scope forever (for this repo): OCR, continuous screenshots, keylogging, clipboard dumps, scraping Slack/Discord desktop clients, meeting transcription, cloud upload of agent chat bodies.
 
 ---
 

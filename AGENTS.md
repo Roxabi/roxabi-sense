@@ -52,7 +52,7 @@ Canonical greps:
 
 1. **Facts only** in collectors — no Discord dispatch, no jobs, no Sentinelle policy.
 2. **No OCR / screenshots / keylogging** as product direction.
-3. Read `~/.claude` and `~/.grok` **read-only** — never rewrite agent histories.
+3. Read `~/.claude`, `~/.grok`, and opt-in Cursor paths **read-only** — never rewrite agent histories or open chat DBs.
 4. **NATS payloads stay coarse** (`activity` / `stale`) — no title firehose by default.
 5. **Surfaces query store/report** — do not reimplement collection or timeline per surface.
 6. **Focus / Wayland behind an interface** — failure must not block agent-session collection.
@@ -63,7 +63,7 @@ Canonical greps:
 | Area | State |
 |------|--------|
 | Store (SQLite WAL) + CLI `status` / `day` / `recap` | **done** |
-| Collectors: agent sessions, idle, focus (AT-SPI), process, mpris, tmux | **done** |
+| Collectors: agent sessions (+ opt-in Cursor), idle, focus probes, process, mpris, tmux | **done** |
 | Daemon + systemd `--user` install | **done** |
 | Report layer (presence, day recap, meeting annotate) | **done** |
 | MCP surface | **done** stdio (`sense mcp` · `uv sync --extra mcp`) |

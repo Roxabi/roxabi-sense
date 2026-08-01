@@ -14,6 +14,7 @@ from roxabi_sense.collectors import (
     TmuxSessionsCollector,
 )
 from roxabi_sense.collectors.base import Collector
+from roxabi_sense.collectors.cursor_sessions import CursorSessionsCollector
 from roxabi_sense.collectors.idle_facts import append_idle_transition
 from roxabi_sense.collectors.idle_watch import SOURCE as WAYLAND_IDLE_SOURCE
 from roxabi_sense.config import SenseConfig
@@ -86,6 +87,15 @@ def build_poll_collectors(
     collectors: list[Collector] = []
     if cfg.agent_sessions:
         collectors.append(AgentSessionsCollector())
+    if cfg.cursor_sessions:
+        collectors.append(
+            CursorSessionsCollector(
+                root=cfg.cursor_root,
+                max_workspaces=cfg.cursor_max_workspaces,
+                max_age_days=cfg.cursor_max_age_days,
+                enabled=True,
+            )
+        )
     if cfg.process_presence:
         collectors.append(ProcessPresenceCollector(cfg.process_names))
     if cfg.idle and logind_idle:
