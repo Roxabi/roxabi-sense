@@ -108,14 +108,16 @@ No Podman required on the laptop for V1. M₂ may use the same user unit. M₁ h
 
 ## Roadmap (coarse)
 
-| Phase | Deliverable |
-|---|---|
-| **0 — this scaffold** | Public repo, purpose, architecture, empty package |
-| **1 — local spine** | Agent-session collector + store + CLI `status` / `day` |
-| **2 — focus** | Wayland/COSMIC focus + idle (AT-SPI first) |
-| **3 — MCP** | 3–5 tools (`active_now`, `what_was_i_doing`, `agent_sessions`, …) |
-| **4 — NATS opt-in** | `factory.event.host.{machine}.activity\|stale` for Sentinelle |
-| **5 — optional** | Process presence, filtered browser history, local status HTTP |
+| Phase | Deliverable | State |
+|---|---|---|
+| **0 — scaffold** | Public repo, purpose, architecture | **done** |
+| **1 — local spine** | Agent-session collector + store + CLI `status` / `day` / `recap` | **done** |
+| **2 — focus + idle** | AT-SPI focus + idle (Wayland / logind) + process/mpris/tmux | **done** |
+| **3 — MCP** | Tools over store/report (`active_now`, day, sessions, …) | open |
+| **4 — NATS opt-in** | `factory.event.host.{machine}.activity\|stale` for Sentinelle | open |
+| **5 — optional** | Filtered browser history, local status HTTP | open |
+
+Agent status detail: [`AGENTS.md`](./AGENTS.md) § Status.
 
 Out of scope forever (for this repo): OCR, continuous screenshots, keylogging, clipboard dumps, scraping Slack/Discord desktop clients, meeting transcription.
 
