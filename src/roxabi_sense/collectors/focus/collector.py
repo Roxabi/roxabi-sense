@@ -88,7 +88,10 @@ class FocusCollector:
         probe_ms: int | None = None,
         source: str | None = None,
     ) -> int:
-        """Apply a window list from the long-lived agent (no subprocess)."""
+        """Apply a window list from the long-lived agent (no subprocess).
+
+        ``source`` applies only to this write — does not sticky-override later polls.
+        """
         t0 = time.monotonic()
         raw: list[FocusWindow]
         if windows and isinstance(windows[0], dict):
@@ -97,14 +100,14 @@ class FocusCollector:
             )
         else:
             raw = [w for w in windows if isinstance(w, FocusWindow)]
-        if source is not None:
-            self._source_override = source
-        return self._finish(store, raw, mode=mode, probe_ms=probe_ms, t0=t0)
+        return self._finish(
+            store, raw, mode=mode, probe_ms=probe_ms, t0=t0, source=source
+        )
 
     def _tick_from_probe(self, store: Store, *, mode: TickMode) -> int:
         t0 = time.monotonic()
         raw = self._read_windows(mode)
-        return self._finish(store, raw, mode=mode, probe_ms=None, t0=t0)
+        return self._finish(store, raw, mode=mode, probe_ms=None, t0=t0, source=None)
 
     def _read_windows(self, mode: TickMode) -> list[FocusWindow]:
         if self._probe is not None or self._probe_focus is not None:
@@ -127,6 +130,7 @@ class FocusCollector:
         mode: TickMode,
         probe_ms: int | None,
         t0: float,
+        source: str | None,
     ) -> int:
         windows = self._enrich(raw, focus_only=(mode == "focus"))
         self.last_probe_ms = (
@@ -136,22 +140,25 @@ class FocusCollector:
         store.set_meta("focus_probe_count", str(self.probe_count))
         store.set_meta("focus_probe_last_ms", str(self.last_probe_ms))
         store.set_meta("focus_probe_last_mode", mode)
+        src = source if source is not None else self.backend_source
 
         wrote = 0
         if mode in {"full", "desktop"}:
             desktop_fp = _desktop_fingerprint(windows)
             if desktop_fp != self._last_desktop_fp:
                 self._last_desktop_fp = desktop_fp
-                store.append(SNAPSHOT, _desktop_payload(windows, source=self.backend_source))
+                store.append(SNAPSHOT, _desktop_payload(windows, source=src))
                 wrote += 1
         if mode == "desktop":
-            wrote += self._maybe_write_focus(store, windows)
+            wrote += self._maybe_write_focus(store, windows, source=src)
             return wrote
         if mode in {"full", "focus"}:
-            wrote += self._maybe_write_focus(store, windows)
+            wrote += self._maybe_write_focus(store, windows, source=src)
         return wrote
 
-    def _maybe_write_focus(self, store: Store, windows: list[FocusWindow]) -> int:
+    def _maybe_write_focus(
+        self, store: Store, windows: list[FocusWindow], *, source: str
+    ) -> int:
         active = next((w for w in windows if w.active), None)
         if active is None:
             return 0
@@ -162,7 +169,7 @@ class FocusCollector:
         body: dict[str, Any] = {
             "app": active.app,
             "title": active.title,
-            "source": self.backend_source,
+            "source": source,
         }
         if active.pid is not None:
             body["pid"] = active.pid

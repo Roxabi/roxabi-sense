@@ -27,10 +27,10 @@ class AtspiFocusProbe:
             return False
         if self._last_ok is not None:
             return self._last_ok
-        # Cold check: one-shot may fail if gi/a11y missing — treat failure as not ok.
+        # Cold check: empty / exception = unusable (probe_once rarely raises).
         try:
             rows = probe_once("focus")
-            return isinstance(rows, list)
+            return isinstance(rows, list) and len(rows) > 0
         except Exception:  # noqa: BLE001
             return False
 

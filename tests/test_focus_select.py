@@ -33,6 +33,18 @@ def test_detect_hyprland() -> None:
         }
     )
     assert info.desktop_family == "wlroots"
+    assert candidate_sources(info) == ["atspi", "x11", "noop"]
+
+
+def test_detect_gnome_and_unknown() -> None:
+    gnome = detect_session(
+        {"XDG_SESSION_TYPE": "wayland", "XDG_CURRENT_DESKTOP": "GNOME"}
+    )
+    assert gnome.desktop_family == "gnome"
+    assert candidate_sources(gnome) == ["atspi", "x11", "noop"]
+    unk = detect_session({})
+    assert unk.session_type == "unknown"
+    assert candidate_sources(unk) == ["atspi", "x11", "noop"]
 
 
 def test_select_first_ok_factory() -> None:

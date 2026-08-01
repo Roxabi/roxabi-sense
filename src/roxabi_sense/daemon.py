@@ -70,15 +70,14 @@ def run_daemon(cfg: SenseConfig) -> int:
         nonlocal agent
         if not cfg.focus_events or focus is None or focus_rt is None:
             return agent
-        if "atspi" not in focus_rt.preferred:
+        # Only when AT-SPI is preferred first (or recovering to preferred atspi).
+        if not focus_rt.preferred or focus_rt.preferred[0] != "atspi":
             return agent
         if agent is not None:
             agent.stop()
         agent = start_atspi_agent(cfg, on_message=atspi_q.put, store=store)
-        if agent is None:
-            focus_rt.mark_atspi(store, healthy=False)
-        else:
-            focus_rt.mark_atspi(store, healthy=False)
+        # Unhealthy until ready message; demote path already selected fallback.
+        focus_rt.mark_atspi(store, healthy=False)
         return agent
 
     def _start_idle_watch() -> IdleWatch | None:
@@ -117,7 +116,7 @@ def run_daemon(cfg: SenseConfig) -> int:
     )
 
     if focus is not None and cfg.focus_events and focus_rt is not None:
-        if "atspi" in focus_rt.preferred:
+        if focus_rt.preferred and focus_rt.preferred[0] == "atspi":
             _start_atspi()
     try:
         if use_wl:
@@ -153,6 +152,15 @@ def collect_once(cfg: SenseConfig) -> int:
     store = Store(cfg.db_path)
     collectors = build_collectors(cfg)
     try:
+        if cfg.focus:
+            from roxabi_sense.collectors.focus import FocusCollector
+            from roxabi_sense.collectors.focus.runtime import FocusRuntime
+
+            focus_col = next(
+                (c for c in collectors if isinstance(c, FocusCollector)), None
+            )
+            if focus_col is not None:
+                FocusRuntime(focus_col).select_initial(store)
         n = tick_all(collectors, store)
         store.set_meta("last_tick", _utc_stamp())
         if store.get_meta("idle_watch") is None:

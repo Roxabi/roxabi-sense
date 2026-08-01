@@ -92,7 +92,10 @@ def build_collectors(cfg: SenseConfig) -> list[Collector]:
     use_logind = cfg.idle and cfg.idle_backend in {"logind", "auto"}
     cols = build_poll_collectors(cfg, logind_idle=use_logind)
     if cfg.focus:
-        cols.append(FocusAtspiCollector())
+        from roxabi_sense.collectors.focus.select import select_probe
+
+        probe = select_probe()
+        cols.append(FocusAtspiCollector(focus_probe=probe))
     return cols
 
 

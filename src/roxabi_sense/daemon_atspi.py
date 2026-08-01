@@ -80,6 +80,7 @@ def handle_atspi_msg(
     store: Store,
     on_activity: Callable[[], None],
     trace: AtspiTraceWriter | None = None,
+    apply_results: bool = True,
 ) -> None:
     typ = msg.get("type")
     if typ == "atspi_raw":
@@ -92,6 +93,11 @@ def handle_atspi_msg(
             trace.write({"type": "agent_ready", "payload": msg})
         return
     if typ != "probe_result" or focus is None:
+        return
+    if not apply_results:
+        return
+    # Ignore late results when collector is no longer on atspi (demoted).
+    if focus.backend_source != "atspi":
         return
     mode = str(msg.get("mode") or "focus")
     reason = msg.get("reason")
