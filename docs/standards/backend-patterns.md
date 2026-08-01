@@ -23,14 +23,15 @@ No FastAPI product surface. No Next/Silex web app. Optional loopback status page
 src/roxabi_sense/
   collectors/   # primary axis — one source of signal per module
   store/        # append + query
-  surfaces/     # cli / mcp / nats — adapters only
-  cli.py        # entrypoints
+  report/       # shared query products (status, recap, presence, event summary)
+  surfaces/     # cli / mcp / nats — adapters only (format + process entry)
+  cli.py        # thin re-export → surfaces.cli (entry compat)
 ```
 
 ## Rules
 
 1. **Collectors emit facts only** — never Discord, job dispatch, or Sentinelle policy.
-2. **Surfaces query the store** — do not reimplement collection or timeline logic per surface.
+2. **Surfaces format only** — query products live in `report/` / `store/` (`status_snapshot`, `summarize_event`, day recap). Do not reimplement collection or timeline logic per surface.
 3. **Read-only agent histories** — `~/.claude`, `~/.grok` are inputs, never rewritten.
 4. **NATS stays coarse** — `activity` / `stale` only; no title firehose by default.
 5. **Focus/Wayland behind an interface** — failure must not block agent-session collection.

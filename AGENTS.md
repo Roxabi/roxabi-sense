@@ -68,9 +68,10 @@ Canonical greps:
 | Report layer (presence, day recap, meeting annotate) | **done** |
 | MCP surface | **stub** (`sense mcp` → exit 2) |
 | NATS opt-in | **not wired** (optional dep empty) |
-| `surfaces/` package | empty stub — live CLI is root `cli.py` |
+| Shared status / event summary | **done** (`report/status.py`, `report/event_summary.py`) |
+| CLI surface | **done** (`surfaces/cli.py`; root `cli.py` re-exports) |
 
-**Next product slices:** extract shared `status_snapshot` / event summarize into `report/` **before** MCP; then MCP tools over store/report only; NATS coarse publish last.
+**Next product slices:** MCP tools under `surfaces/mcp.py` over `report`/`store` only (never collectors); NATS coarse publish last.
 
 ## Stack & commands
 
@@ -93,11 +94,11 @@ Config: `~/.config/roxabi-sense/config.toml`
 src/roxabi_sense/
   collectors/   # primary axis — one signal source per module
   store/        # append + query (SSOT facts)
-  report/       # day recap, presence, segments (above store)
+  report/       # status_snapshot, summarize_event, day recap, presence
   atspi/        # focus probe worker (system Python + gi)
   util/         # pure helpers (time, titles, proc, session registry)
-  surfaces/     # secondary adapters (MCP/NATS later) — thin only
-  cli.py        # current human surface
+  surfaces/     # CLI (cli.py) · MCP/NATS later — format only
+  cli.py        # re-export surfaces.cli:main (script entry)
   daemon*.py    # orchestration
 deploy/         # systemd user unit
 ```
