@@ -3,7 +3,9 @@
   "allowlist": [
     "typing_extensions",
     "packaging",
-    "roxabi-sense"
+    "roxabi-sense",
+    "cffi",
+    "cryptography"
   ],
   "overrides": {}
 }
