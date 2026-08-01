@@ -249,10 +249,24 @@ No Podman required on the laptop for V1. M₂ may use the same user unit. M₁ h
 |---|---|---|
 | **0 — scaffold** | Public repo, purpose, architecture | **done** |
 | **1 — local spine** | Agent-session collector + store + CLI `status` / `day` / `recap` | **done** |
-| **2 — focus + idle** | AT-SPI focus + idle (Wayland / logind) + process/mpris/tmux | **done** |
+| **2 — focus + idle** | Multi-backend focus probes + idle (Wayland / logind) + process/mpris/tmux | **done** (P0) |
 | **3 — MCP** | stdio tools over `SenseQuery` (`active_now`, timeline, sessions, …) | **done** |
 | **4 — NATS opt-in** | `factory.event.host.{machine}.activity\|stale` for Sentinelle | open |
 | **5 — optional** | Filtered browser history, local status HTTP | open |
+
+### Focus probes (multi-Linux)
+
+Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. Fact field `source` is the **backend id** (`atspi` | `x11` | `noop`; `wlr` / `kde` reserved for P1).
+
+| Session | Candidate order (first healthy wins) |
+|---------|--------------------------------------|
+| Wayland (GNOME / Cosmic / unknown) | `atspi` → `x11` → `noop` |
+| Pure X11 | `x11` → `atspi` → `noop` |
+
+- **AT-SPI** — long-lived agent (system Python + `gi`); best on GNOME/Cosmic when a11y works.
+- **X11** — `xprop` / active window (XWayland fallback). Package: **`x11-utils`** (Debian/Ubuntu/Pop) or distro equivalent providing `xprop`.
+- **Runtime demote** — if AT-SPI dies, daemon switches to x11/noop without blocking other collectors; `sense doctor` shows `focus` capability + backend.
+- Meta: `focus_backend`, `focus_status`, `session_type`, `desktop_family`, `last_focus_path` (event/cmd/backup/poll — not the fact `source`).
 
 Agent status detail: [`AGENTS.md`](./AGENTS.md) § Status.
 

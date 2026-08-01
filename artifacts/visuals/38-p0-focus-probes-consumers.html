@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>P0 focus — consumers</title>
+<style>
+  :root { --bg:#0f1218; --panel:#1a2030; --text:#e8ecf4; --mut:#8b95a8; --line:#2a3348; --accent:#7aa2ff; --ok:#3dd68c; }
+  body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); padding:2rem; max-width:900px; }
+  h1 { font-size:1.2rem; }
+  .sub { color:var(--mut); }
+  .hub { margin:1.5rem auto; max-width:220px; text-align:center; background:var(--panel); border:1px solid var(--ok); border-radius:10px; padding:1rem; }
+  .ring { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; margin-top:1rem; }
+  .c { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.7rem; }
+  .c.future { opacity:.55; border-style:dashed; }
+  .c h2 { font-size:.9rem; margin:0 0 .3rem; }
+  .c p { margin:0; color:var(--mut); font-size:12px; }
+  code { color:var(--accent); font:12px ui-monospace,monospace; }
+</style>
+</head>
+<body>
+  <h1>Who consumes focus data</h1>
+  <p class="sub">Solid = this PR · dashed = future</p>
+  <div class="hub"><strong>Store facts + meta</strong><br/><code>kind=focus</code> · <code>focus_*</code> meta</div>
+  <div class="ring">
+    <div class="c"><h2>FocusCollector</h2><p>writes facts with <code>source</code></p></div>
+    <div class="c"><h2>Doctor</h2><p>capabilities from meta (+ live)</p></div>
+    <div class="c"><h2>report / day / segments</h2><p>app/title dwell — source optional</p></div>
+    <div class="c"><h2>query / MCP status</h2><p>latest focus; pass-through source</p></div>
+    <div class="c future"><h2>NATS coarse</h2><p>activity/stale only — no titles</p></div>
+    <div class="c future"><h2>wlr / kde probes</h2><p>same protocol, P1</p></div>
+  </div>
+</body>
+</html>

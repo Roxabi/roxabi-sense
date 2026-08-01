@@ -1,21 +1,17 @@
-"""Daemon: long-lived AT-SPI agent + idle watch + polled collectors."""
+"""Daemon: focus probes + AT-SPI agent + idle watch + polled collectors."""
 
 from __future__ import annotations
 
 import queue
 import signal
-import time
 from typing import Any
 
 from roxabi_sense.atspi import FocusAtspiAgent
-from roxabi_sense.collectors.focus_atspi import FocusAtspiCollector
+from roxabi_sense.collectors.focus import FocusCollector
+from roxabi_sense.collectors.focus.runtime import FocusRuntime
 from roxabi_sense.collectors.idle_watch import IdleWatch
 from roxabi_sense.config import SenseConfig
-from roxabi_sense.daemon_atspi import (
-    handle_atspi_msg,
-    make_trace_writer,
-    start_atspi_agent,
-)
+from roxabi_sense.daemon_atspi import make_trace_writer, start_atspi_agent
 from roxabi_sense.daemon_collectors import (  # noqa: F401 — re-export for tests
     _utc_stamp,
     build_collectors,
@@ -26,29 +22,19 @@ from roxabi_sense.daemon_collectors import (  # noqa: F401 — re-export for tes
     want_logind_idle,
     want_wayland_idle,
 )
+from roxabi_sense.daemon_loop import run_main_loop
 from roxabi_sense.store import Store
 
-_IDLE_RESPAWN_BASE_S = 2.0
-_IDLE_RESPAWN_MAX_S = 60.0
-_ATSPI_RESPAWN_BASE_S = 2.0
-_ATSPI_RESPAWN_MAX_S = 60.0
 
 def run_daemon(cfg: SenseConfig) -> int:
     store = Store(cfg.db_path)
-    focus: FocusAtspiCollector | None = FocusAtspiCollector() if cfg.focus else None
-    focus_on_poll = bool(focus is not None and not cfg.focus_events)
+    focus: FocusCollector | None = FocusCollector() if cfg.focus else None
+    focus_rt: FocusRuntime | None = FocusRuntime(focus) if focus is not None else None
     stop = False
     atspi_q: queue.Queue[dict[str, Any]] = queue.Queue()
     idle_q: queue.Queue[dict[str, Any]] = queue.Queue()
     agent: FocusAtspiAgent | None = None
     idle_watch: IdleWatch | None = None
-    wayland_healthy = False
-    idle_respawn_at = 0.0
-    idle_backoff = _IDLE_RESPAWN_BASE_S
-    atspi_respawn_at = 0.0
-    atspi_backoff = _ATSPI_RESPAWN_BASE_S
-    last_activity_ts: str | None = None
-    events_enabled = bool(focus is not None and cfg.focus_events)
     trace = make_trace_writer(cfg)
     if trace is not None:
         print(f"sense atspi-trace: {trace.path} ({cfg.atspi_trace_hours}h)", flush=True)
@@ -66,39 +52,39 @@ def run_daemon(cfg: SenseConfig) -> int:
     store.set_meta("atspi_agent", "n/a")
     store.set_meta("last_tick", _utc_stamp())
 
-    mode = "events+desktop" if events_enabled else ("poll" if focus else "off")
-    use_wl = want_wayland_idle(cfg)
-    poll_collectors = build_poll_collectors(
-        cfg, logind_idle=want_logind_idle(cfg, wayland_healthy=False)
-    )
-    print(
-        f"sense daemon: db={cfg.db_path} poll={cfg.poll_seconds}s "
-        f"focus={mode} desktop={cfg.focus_backup_seconds}s "
-        f"name={cfg.focus_name_events}/{cfg.focus_name_throttle_s}s "
-        f"atspi=long-lived idle={cfg.idle_backend}/{cfg.idle_threshold_s}s "
-        f"poll={[c.name for c in poll_collectors]}",
-        flush=True,
-    )
+    if focus_rt is not None:
+        focus_rt.select_initial(store)
 
-    def _start_atspi() -> None:
-        nonlocal agent, events_enabled, focus_on_poll
-        if not cfg.focus_events or focus is None:
-            return
+    def _sync_focus_mode(ag: FocusAtspiAgent | None) -> tuple[bool, bool]:
+        if focus is None or focus_rt is None:
+            return False, False
+        atspi_live = (
+            focus_rt.active.source == "atspi"
+            and cfg.focus_events
+            and ag is not None
+            and ag.running
+        )
+        return bool(atspi_live), not atspi_live
+
+    def _start_atspi() -> FocusAtspiAgent | None:
+        nonlocal agent
+        if not cfg.focus_events or focus is None or focus_rt is None:
+            return agent
+        # Only when AT-SPI is preferred first (or recovering to preferred atspi).
+        if not focus_rt.preferred or focus_rt.preferred[0] != "atspi":
+            return agent
         if agent is not None:
             agent.stop()
         agent = start_atspi_agent(cfg, on_message=atspi_q.put, store=store)
-        if agent is None:
-            events_enabled = False
-            focus_on_poll = True
-        else:
-            events_enabled = True
-            focus_on_poll = False
+        # Unhealthy until ready message; demote path already selected fallback.
+        focus_rt.mark_atspi(store, healthy=False)
+        return agent
 
-    def _start_idle_watch() -> None:
-        nonlocal idle_watch, wayland_healthy, idle_backoff
+    def _start_idle_watch() -> IdleWatch | None:
+        nonlocal idle_watch
         if not use_wl:
             store.set_meta("idle_watch", "n/a")
-            return
+            return None
         if idle_watch is not None:
             idle_watch.stop()
         idle_watch = IdleWatch(
@@ -112,169 +98,46 @@ def run_daemon(cfg: SenseConfig) -> int:
         except Exception as exc:  # noqa: BLE001
             print(f"sense idle-watch failed to start: {exc}", flush=True)
             store.set_meta("idle_watch", "dead")
-            wayland_healthy = False
             idle_watch = None
+        return idle_watch
 
-    if events_enabled:
-        _start_atspi()
-    if use_wl:
-        _start_idle_watch()
+    use_wl = want_wayland_idle(cfg)
+    poll_collectors = build_poll_collectors(
+        cfg, logind_idle=want_logind_idle(cfg, wayland_healthy=False)
+    )
+    mode = "events+desktop" if (focus and cfg.focus_events) else ("poll" if focus else "off")
+    print(
+        f"sense daemon: db={cfg.db_path} poll={cfg.poll_seconds}s "
+        f"focus={mode} desktop={cfg.focus_backup_seconds}s "
+        f"name={cfg.focus_name_events}/{cfg.focus_name_throttle_s}s "
+        f"atspi=long-lived idle={cfg.idle_backend}/{cfg.idle_threshold_s}s "
+        f"poll={[c.name for c in poll_collectors]}",
+        flush=True,
+    )
 
-    now0 = time.monotonic()
-    next_poll = now0 + cfg.poll_seconds
-    next_desktop = now0 + cfg.focus_backup_seconds if events_enabled else float("inf")
-
+    if focus is not None and cfg.focus_events and focus_rt is not None:
+        if focus_rt.preferred and focus_rt.preferred[0] == "atspi":
+            _start_atspi()
     try:
-        boot_cols = list(poll_collectors)
-        if focus is not None:
-            boot_cols.append(focus)
-        wrote = tick_all(boot_cols, store)
-        store.set_meta("last_tick", _utc_stamp())
-        if wrote:
-            print(
-                f"sense tick (boot): +{wrote} events (total={store.count()})",
-                flush=True,
-            )
-
-        def _on_activity() -> None:
-            nonlocal last_activity_ts
-            store.set_meta("last_tick", _utc_stamp())
-            last_activity_ts = _utc_stamp()
-
-        while not stop:
-            now = time.monotonic()
-            deadlines = [next_poll]
-            if events_enabled and focus is not None:
-                deadlines.append(next_desktop)
-            if idle_respawn_at > 0:
-                deadlines.append(idle_respawn_at)
-            if atspi_respawn_at > 0:
-                deadlines.append(atspi_respawn_at)
-            wait = max(0.05, min(deadlines) - now)
-
-            try:
-                batch = [atspi_q.get(timeout=wait)]
-                while True:
-                    try:
-                        batch.append(atspi_q.get_nowait())
-                    except queue.Empty:
-                        break
-                for msg in batch:
-                    handle_atspi_msg(
-                        msg,
-                        focus=focus,
-                        store=store,
-                        on_activity=_on_activity,
-                        trace=trace,
-                    )
-            except queue.Empty:
-                pass
-
-            while True:
-                try:
-                    msg = idle_q.get_nowait()
-                except queue.Empty:
-                    break
-                handle_idle_msg(
-                    msg, store=store, cfg=cfg, last_activity_ts=last_activity_ts
-                )
-                typ = msg.get("type")
-                if typ == "ready":
-                    wayland_healthy = True
-                    idle_backoff = _IDLE_RESPAWN_BASE_S
-                    poll_collectors = build_poll_collectors(
-                        cfg,
-                        logind_idle=want_logind_idle(cfg, wayland_healthy=True),
-                    )
-                elif typ == "error":
-                    wayland_healthy = False
-                elif typ == "idle" and msg.get("idle") is False:
-                    last_activity_ts = _utc_stamp()
-
-            if stop:
-                break
-
-            now = time.monotonic()
-            if (
-                use_wl
-                and idle_watch is not None
-                and not idle_watch.running
-                and idle_respawn_at <= 0
-            ):
-                wayland_healthy = False
-                store.set_meta("idle_watch", "dead")
-                poll_collectors = build_poll_collectors(
-                    cfg,
-                    logind_idle=want_logind_idle(cfg, wayland_healthy=False),
-                )
-                idle_respawn_at = now + idle_backoff
-                print(
-                    f"sense idle-watch: exited — degrade; respawn in {idle_backoff:.0f}s",
-                    flush=True,
-                )
-                idle_backoff = min(_IDLE_RESPAWN_MAX_S, idle_backoff * 2)
-
-            if use_wl and idle_respawn_at > 0 and now >= idle_respawn_at:
-                idle_respawn_at = 0.0
-                _start_idle_watch()
-
-            if (
-                cfg.focus_events
-                and focus is not None
-                and agent is not None
-                and not agent.running
-                and atspi_respawn_at <= 0
-            ):
-                store.set_meta("atspi_agent", "dead")
-                print(
-                    f"sense atspi-agent: exited — poll + respawn in {atspi_backoff:.0f}s",
-                    flush=True,
-                )
-                agent.stop()
-                agent = None
-                focus_on_poll = True
-                events_enabled = False
-                next_desktop = float("inf")
-                atspi_respawn_at = now + atspi_backoff
-                atspi_backoff = min(_ATSPI_RESPAWN_MAX_S, atspi_backoff * 2)
-
-            if atspi_respawn_at > 0 and now >= atspi_respawn_at:
-                atspi_respawn_at = 0.0
-                events_enabled = True
-                _start_atspi()
-                if agent is not None and agent.running:
-                    next_desktop = now + cfg.focus_backup_seconds
-                    atspi_backoff = _ATSPI_RESPAWN_BASE_S
-                else:
-                    events_enabled = False
-                    focus_on_poll = True
-                    atspi_respawn_at = now + atspi_backoff
-                    atspi_backoff = min(_ATSPI_RESPAWN_MAX_S, atspi_backoff * 2)
-
-            if now >= next_poll:
-                cols = list(poll_collectors)
-                if focus is not None and focus_on_poll:
-                    cols.append(focus)
-                wrote = tick_all(cols, store)
-                store.set_meta("last_tick", _utc_stamp())
-                if focus is not None and focus_on_poll and wrote:
-                    store.set_meta("last_focus_source", "poll")
-                if wrote:
-                    print(
-                        f"sense tick (poll): +{wrote} (total={store.count()})",
-                        flush=True,
-                    )
-                next_poll = now + cfg.poll_seconds
-
-            if (
-                events_enabled
-                and focus is not None
-                and agent is not None
-                and now >= next_desktop
-            ):
-                agent.request_probe("desktop")
-                next_desktop = now + cfg.focus_backup_seconds
-
+        if use_wl:
+            _start_idle_watch()
+        run_main_loop(
+            cfg=cfg,
+            store=store,
+            focus=focus,
+            focus_rt=focus_rt,
+            poll_collectors=poll_collectors,
+            use_wl=use_wl,
+            atspi_q=atspi_q,
+            idle_q=idle_q,
+            agent=agent,
+            idle_watch=idle_watch,
+            start_atspi=_start_atspi,
+            start_idle_watch=_start_idle_watch,
+            sync_focus_mode=_sync_focus_mode,
+            stop_flag=lambda: stop,
+            trace=trace,
+        )
     finally:
         if agent is not None:
             agent.stop()
@@ -284,10 +147,20 @@ def run_daemon(cfg: SenseConfig) -> int:
         print("sense daemon: stopped", flush=True)
     return 0
 
+
 def collect_once(cfg: SenseConfig) -> int:
     store = Store(cfg.db_path)
     collectors = build_collectors(cfg)
     try:
+        if cfg.focus:
+            from roxabi_sense.collectors.focus import FocusCollector
+            from roxabi_sense.collectors.focus.runtime import FocusRuntime
+
+            focus_col = next(
+                (c for c in collectors if isinstance(c, FocusCollector)), None
+            )
+            if focus_col is not None:
+                FocusRuntime(focus_col).select_initial(store)
         n = tick_all(collectors, store)
         store.set_meta("last_tick", _utc_stamp())
         if store.get_meta("idle_watch") is None:
@@ -295,5 +168,6 @@ def collect_once(cfg: SenseConfig) -> int:
         return n
     finally:
         store.close()
+
 
 __all__ = ["build_collectors", "build_poll_collectors", "collect_once", "run_daemon"]

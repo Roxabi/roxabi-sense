@@ -128,7 +128,7 @@ stay on the workstation. Local stdio MCP remains for offline / workstation agent
 
 1. **Agent sessions** — parse `~/.grok/active_sessions.json`, session dirs, `~/.claude/history.jsonl` / project JSONL mtimes (read-only). Highest ROI, zero OS integration pain.  
 2. **Idle** — Wayland `ext-idle-notify` (primary on Cosmic); logind secondary; see ADR-002.  
-3. **Focus** — AT-SPI or Cosmic/Wayland path (hardest; isolate behind interface).  
+3. **Focus** — `FocusProbe` protocol under `collectors/focus/` (AT-SPI agent, x11 xprop, noop; wlr/kde P1). Selection from session env; daemon demotes when AT-SPI dies.  
 4. **Process presence** — `pgrep`-class checks for configured app names.  
 
 Focus failure must not block agent-session collection.
