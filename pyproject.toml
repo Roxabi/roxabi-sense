@@ -16,6 +16,7 @@ nats = [
 ]
 mcp = [
     # pin MCP SDK when implementing sense mcp
+    "mcp>=1.9",
 ]
 
 [project.scripts]
@@ -34,6 +35,7 @@ dev = [
     "pyright>=1.1.411",
     "pytest>=8.0",
     "ruff>=0.9",
+    "mcp>=1.9",  # test MCP surface registration
 ]
 
 [tool.ruff]

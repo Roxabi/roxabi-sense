@@ -66,12 +66,13 @@ Canonical greps:
 | Collectors: agent sessions, idle, focus (AT-SPI), process, mpris, tmux | **done** |
 | Daemon + systemd `--user` install | **done** |
 | Report layer (presence, day recap, meeting annotate) | **done** |
-| MCP surface | **stub** (`sense mcp` → exit 2) |
+| MCP surface | **done** stdio (`sense mcp` · `uv sync --extra mcp`) |
+| Query API | **done** (`query.SenseQuery` — JSON for MCP / future HTTP / CF) |
 | NATS opt-in | **not wired** (optional dep empty) |
 | Shared status / event summary | **done** (`report/status.py`, `report/event_summary.py`) |
 | CLI surface | **done** (`surfaces/cli.py`; root `cli.py` re-exports) |
 
-**Next product slices:** MCP tools under `surfaces/mcp.py` over `report`/`store` only (never collectors); NATS coarse publish last.
+**Next product slices:** NATS coarse publish; optional HTTP over `SenseQuery`; Cloudflare port of query contracts when data plane moves.
 
 ## Stack & commands
 
@@ -97,7 +98,8 @@ src/roxabi_sense/
   report/       # status_snapshot, summarize_event, day recap, presence
   atspi/        # focus probe worker (system Python + gi)
   util/         # pure helpers (time, titles, proc, session registry)
-  surfaces/     # CLI (cli.py) · MCP/NATS later — format only
+  query.py      # transport-agnostic JSON read API (MCP/HTTP/CF)
+  surfaces/     # CLI · MCP stdio · (NATS later) — adapters only
   cli.py        # re-export surfaces.cli:main (script entry)
   daemon*.py    # orchestration
 deploy/         # systemd user unit

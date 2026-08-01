@@ -54,8 +54,17 @@ def test_day_invalid_date(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "invalid day" in capsys.readouterr().err
 
 
-def test_mcp_not_implemented() -> None:
-    assert main(["mcp"]) == 2
+def test_mcp_invokes_run_mcp(monkeypatch) -> None:
+    """Do not start real stdio server in unit tests."""
+    called: list[str] = []
+
+    def fake_run(cfg, *, transport: str = "stdio") -> int:
+        called.append(transport)
+        return 0
+
+    monkeypatch.setattr("roxabi_sense.surfaces.mcp.run_mcp", fake_run)
+    assert main(["mcp"]) == 0
+    assert called == ["stdio"]
 
 
 def test_bad_config_exits_2(tmp_path: Path, monkeypatch, capsys) -> None:

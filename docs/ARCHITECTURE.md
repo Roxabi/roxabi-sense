@@ -61,14 +61,40 @@ Rules:
 - Sensor never calls Discord or dispatches `factory.jobs.*`  
 - Presence mapping uses shared `derive_presence` (ADR-002), not per-surface reimplementation
 
-## MCP tools (target V1 surface)
+## MCP + query API (V1)
 
-| Tool | Returns |
+**Sense is the MCP server** (stdio by default): host agents spawn `sense mcp`.
+It does **not** call an external MCP.
+
+| Layer | Role |
 |---|---|
-| `active_now` | Current focus + open agent sessions |
-| `what_was_i_doing` | Timeline slice (`from` / `to`) |
-| `agent_sessions` | Claude/Grok sessions in window |
-| `sense_status` | Daemon health, last collect times |
+| `query.SenseQuery` | Transport-agnostic JSON read API (SSOT for tools / future HTTP) |
+| `surfaces/mcp.py` | MCP adapter (`MCPServer` tools → `SenseQuery`) |
+| `surfaces/cli.py` | Human CLI (format only) |
+
+| Tool | Suggested HTTP (future) | Returns |
+|---|---|---|
+| `sense_status` | `GET /v1/status` | Daemon health, presence |
+| `active_now` | `GET /v1/active` | Presence + latest focus + sessions |
+| `what_was_i_doing` | `GET /v1/timeline?day=` | Day event summaries |
+| `agent_sessions` | `GET /v1/sessions?day=` | Sessions for day |
+| `day_recap` | `GET /v1/recap?day=` | Compiled recap JSON |
+
+Default redaction: **coarse** (no titles / media / full paths). Operator may set
+`[mcp] detail = "full"` in config — **not** via tool arguments (ADR-002).
+
+```bash
+# agent host (Claude / Grok)
+# mcpServers.sense.command = ["uv", "run", "--extra", "mcp", "--directory", "...", "sense", "mcp"]
+uv sync --extra mcp
+uv run sense mcp   # stdio
+
+# remote MCP later (same tools): MCPServer.run(transport="streamable-http")
+```
+
+**Cloudflare path (later):** reimplement `SenseQuery` contracts against D1/R2 (or
+mirror store); expose Workers MCP/HTTP with the same tool names and JSON shapes.
+Collectors stay on the workstation; cloud holds durable query replica if needed.
 
 ## Collectors priority
 
