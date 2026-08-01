@@ -88,6 +88,7 @@ sense mcp                            # stdio MCP (agents spawn this)
 # Host MCP (happy path — PATH only; full snippets in README)
 #   grok mcp add roxabi-sense -- sense mcp
 #   claude mcp add -s user roxabi-sense -- sense mcp
+# Thin plugin (optional DX): plugins/roxabi-sense/  (.mcp.json → same PATH command)
 
 # Contributor / in-tree
 uv sync --extra mcp
