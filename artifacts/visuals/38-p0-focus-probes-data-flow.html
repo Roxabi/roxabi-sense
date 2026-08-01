@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>P0 focus — recommended data flow</title>
+<style>
+  :root { --bg:#0f1218; --panel:#1a2030; --text:#e8ecf4; --mut:#8b95a8; --ok:#3dd68c; --line:#2a3348; --accent:#7aa2ff; --amber:#f5a524; }
+  body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); padding:2rem; max-width:920px; }
+  h1 { font-size:1.25rem; margin:0 0 .25rem; }
+  .sub { color:var(--mut); margin-bottom:1.25rem; }
+  .flow { display:flex; flex-direction:column; gap:.6rem; }
+  .row { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+  .box { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.55rem .75rem; }
+  .box.hub { border-color:var(--ok); }
+  .box.store { border-color:var(--amber); }
+  .arrow { color:var(--mut); font-size:12px; margin:0 .15rem; }
+  code { font:12px ui-monospace,monospace; color:var(--accent); }
+  table { width:100%; border-collapse:collapse; margin-top:1.5rem; font-size:13px; }
+  th, td { text-align:left; padding:.45rem .5rem; border-bottom:1px solid var(--line); }
+  th { color:var(--mut); font-weight:600; }
+</style>
+</head>
+<body>
+  <h1>Recommended flow (Shape 1)</h1>
+  <p class="sub">Select → active FocusProbe → collector enrich → store · doctor reads meta</p>
+  <div class="flow">
+    <div class="row">
+      <div class="box">env<br/><code>XDG_*</code></div>
+      <span class="arrow">→</span>
+      <div class="box hub">select<br/><code>candidates[]</code></div>
+      <span class="arrow">→</span>
+      <div class="box">atspi · x11 · noop<br/><code>probe().ok</code></div>
+    </div>
+    <div class="row">
+      <div class="box hub">active probe<br/><code>get_active()</code> / events</div>
+      <span class="arrow">→</span>
+      <div class="box hub">FocusCollector<br/>enrich + dedup</div>
+      <span class="arrow">→</span>
+      <div class="box store">store<br/><code>kind=focus source=…</code></div>
+    </div>
+    <div class="row">
+      <div class="box">daemon demote<br/>AT-SPI dead</div>
+      <span class="arrow">→</span>
+      <div class="box">next candidate</div>
+      <span class="arrow">→</span>
+      <div class="box store">meta<br/><code>focus_backend / focus_status</code></div>
+      <span class="arrow">→</span>
+      <div class="box">doctor / MCP</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Fact / meta</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>payload.source</code></td><td>backend id: atspi | x11 | wlr | kde | noop</td></tr>
+      <tr><td><code>meta.focus_backend</code></td><td>active backend</td></tr>
+      <tr><td><code>meta.focus_status</code></td><td>available | degraded | unavailable</td></tr>
+      <tr><td><code>meta.last_focus_path</code></td><td>event | cmd | backup | poll (not backend)</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>

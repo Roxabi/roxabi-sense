@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>P0 focus — architecture shapes</title>
+<style>
+  :root { --bg:#0f1218; --panel:#1a2030; --text:#e8ecf4; --mut:#8b95a8; --ok:#3dd68c; --warn:#f5a524; --bad:#f31260; --line:#2a3348; --accent:#7aa2ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); padding:2rem; }
+  h1 { font-size:1.25rem; margin:0 0 .25rem; }
+  .sub { color:var(--mut); margin-bottom:1.5rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:1rem; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:1rem 1.1rem; }
+  .card.rec { border-color:var(--ok); box-shadow:0 0 0 1px rgba(61,214,140,.25); }
+  .tag { display:inline-block; font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--mut); margin-bottom:.4rem; }
+  .tag.ok { color:var(--ok); } .tag.bad { color:var(--bad); } .tag.warn { color:var(--warn); }
+  h2 { font-size:1rem; margin:.2rem 0 .6rem; }
+  ul { margin:.4rem 0 0; padding-left:1.1rem; color:var(--mut); }
+  li { margin:.25rem 0; }
+  code { font:12px ui-monospace,monospace; color:var(--accent); }
+  .verdict { margin-top:1.5rem; padding:1rem; border-left:3px solid var(--ok); background:var(--panel); }
+</style>
+</head>
+<body>
+  <h1>P0 focus probes — shapes</h1>
+  <p class="sub">#38→#42 · ADR-001 · folder-size gate on <code>collectors/</code> (11/12)</p>
+  <div class="grid">
+    <div class="card rec">
+      <div class="tag ok">Shape 1 · recommended</div>
+      <h2><code>collectors/focus/</code> package</h2>
+      <ul>
+        <li>protocol · select · collector · probes/{atspi,x11,noop}</li>
+        <li>daemon owns demote/recover</li>
+        <li>folder gate OK · P1 drop-in</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="tag bad">Shape 2 · eliminated</div>
+      <h2>Graft flat under <code>collectors/</code></h2>
+      <ul>
+        <li>focus_probe.py + focus_x11.py siblings</li>
+        <li>breaks ≤12 files gate</li>
+        <li>P1 makes worse</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="tag bad">Shape 3 · eliminated</div>
+      <h2>One collector per backend</h2>
+      <ul>
+        <li>wrong axis (ADR-001)</li>
+        <li>double-write / demote mess</li>
+        <li>duplicates enrich</li>
+      </ul>
+    </div>
+  </div>
+  <div class="verdict"><strong>Fit:</strong> Shape 1 only — package under primary axis, probes as variants of one signal.</div>
+</body>
+</html>
