@@ -66,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("daemon", help="Run collectors in foreground")
     sub.add_parser("mcp", help="Run MCP stdio server (uv sync --extra mcp)")
+    p_doc = sub.add_parser("doctor", help="Install + daemon + MCP readiness checks")
+    p_doc.add_argument("--json", action="store_true", help="JSON report")
     sub.add_parser("install-service", help="Install systemd --user unit")
     sub.add_parser("once", help="Single collect tick then exit")
     p_tr = sub.add_parser("atspi-trace", help="AT-SPI empirical JSONL trace status")
@@ -110,6 +112,15 @@ def main(argv: list[str] | None = None) -> int:
         from roxabi_sense.surfaces.mcp import run_mcp
 
         return run_mcp(cfg, transport="stdio")
+    if args.cmd == "doctor":
+        from roxabi_sense.doctor import doctor_exit_code, format_doctor_text, run_doctor
+
+        report = run_doctor(cfg)
+        if args.json:
+            print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        else:
+            print(format_doctor_text(report))
+        return doctor_exit_code(report)
     if args.cmd == "atspi-trace":
         from roxabi_sense.atspi.trace_log import default_trace_path, summarize_trace
 
