@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "roxabi-sense": {
+      "command": "sense",
+      "args": ["mcp"]
+    }
+  }
+}

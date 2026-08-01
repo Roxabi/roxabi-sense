@@ -1,0 +1,20 @@
+{
+  "name": "roxabi-sense",
+  "displayName": "roxabi-sense",
+  "version": "0.1.0",
+  "description": "Thin agent DX for the workstation attention sensor — wires MCP to PATH `sense mcp`. Does not bundle the daemon, collectors, or a second query layer. Requires roxabi-sense[mcp] on PATH (sense doctor green).",
+  "author": {
+    "name": "Roxabi",
+    "url": "https://github.com/Roxabi"
+  },
+  "homepage": "https://github.com/Roxabi/roxabi-sense",
+  "repository": "https://github.com/Roxabi/roxabi-sense",
+  "license": "AGPL-3.0-or-later",
+  "keywords": [
+    "mcp",
+    "attention",
+    "activity",
+    "local-first",
+    "roxabi-sense"
+  ]
+}

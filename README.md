@@ -84,7 +84,7 @@ Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · purpose: [`docs/PURPO
 |-------|----------------|-----|
 | **Data plane** | Always-on collectors → SQLite | `sense install-service` + `systemctl --user enable --now roxabi-sense.service` |
 | **Query plane** | Read API for humans/agents | CLI: `sense status` / `recap` · MCP: `sense mcp` (stdio) |
-| **Agent DX** | Host wires MCP | Grok/Claude config → `sense mcp` on **PATH** (thin plugin later) |
+| **Agent DX** | Host wires MCP | Grok/Claude host snippets **or** thin plugin `plugins/roxabi-sense/` (`.mcp.json` → PATH `sense mcp`) |
 
 Data plane and query plane are **separate**: MCP does not start collectors. Empty/offline tools ⇒ fix the daemon, not the agent config.
 
@@ -211,6 +211,26 @@ sense doctor
 - Default MCP redaction is **coarse** (no window titles / media tracks / full paths). Full detail only via operator config `[mcp] detail = "full"` — not tool-arg escalation (ADR-002).
 - Agent spawn trusts the `sense` binary on PATH. Prefer operator-owned `uv tool` install over a world-writable clone.
 - Only wire agents you trust with activity metadata.
+
+### Thin agent plugin (optional)
+
+Optional DX package under [`plugins/roxabi-sense/`](plugins/roxabi-sense/) — **wiring only**:
+
+| Ships | Does not ship |
+|-------|----------------|
+| `.mcp.json` → `command: sense`, `args: [mcp]` | Python runtime, collectors, AT-SPI |
+| Skill: when/how to use `sense_*` tools | Second query layer / private SQL |
+| Plugin README + missing-PATH fallback | systemd unit / daemon start |
+
+```bash
+# Same happy path as host snippets — plugin just packages it:
+#   command = "sense"  args = ["mcp"]
+# Manual still wins until marketplace publish:
+grok mcp add roxabi-sense -- sense mcp
+claude mcp add -s user roxabi-sense -- sense mcp
+```
+
+Requires `roxabi-sense[mcp]` on PATH (package ≥ 0.0.1 with MCP extra) and `sense doctor` green. Full plugin notes: [`plugins/roxabi-sense/README.md`](plugins/roxabi-sense/README.md).
 
 Contributor / in-tree workflow (not for host MCP config):
 

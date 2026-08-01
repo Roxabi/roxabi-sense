@@ -89,7 +89,7 @@ Default redaction: **coarse** (no titles / media / full paths). Operator may set
 |-------|---------|---------|
 | Data plane | `sense daemon` / systemd `--user` | `sense install-service` + enable unit |
 | Query plane | `sense` CLI + `sense mcp` stdio | `uv tool install -e '.[mcp]'` → `sense` on PATH |
-| Agent DX | host MCP config | `command = "sense"`, `args = ["mcp"]` (no worktree path) |
+| Agent DX | host MCP config **or** thin plugin | `command = "sense"`, `args = ["mcp"]` (no worktree path); see `plugins/roxabi-sense/` |
 
 ```bash
 # PATH-stable (operator machines) — preferred for agent spawn
@@ -104,6 +104,7 @@ sense mcp                            # stdio MCP server
 #           or [mcp_servers.roxabi-sense] command/args in ~/.grok/config.toml
 #   Claude: claude mcp add -s user roxabi-sense -- sense mcp
 #           or project .mcp.json { "command": "sense", "args": ["mcp"] }
+# Thin plugin (optional): plugins/roxabi-sense/ — same .mcp.json shape; no fat embed
 # Never put feature-worktree paths in host config.
 
 # Dev-only (do not put clone paths in production agent configs):
