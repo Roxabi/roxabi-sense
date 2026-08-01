@@ -78,31 +78,62 @@ Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · purpose: [`docs/PURPO
 | NATS publisher (optional extra) | **Yes later** — facts only, feature-flagged |
 | Tiny `127.0.0.1` status page | **Optional V2** — human glance only, not the product surface |
 
-### Setup model (target)
+### Install matrix
+
+| Layer | What it does | How |
+|-------|----------------|-----|
+| **Data plane** | Always-on collectors → SQLite | `sense install-service` + `systemctl --user enable --now roxabi-sense.service` |
+| **Query plane** | Read API for humans/agents | CLI: `sense status` / `recap` · MCP: `sense mcp` (stdio) |
+| **Agent DX** | Host wires MCP | Grok/Claude config → `sense mcp` on **PATH** (thin plugin later) |
+
+Data plane and query plane are **separate**: MCP does not start collectors. Empty/offline tools ⇒ fix the daemon, not the agent config.
+
+### Setup (PATH-stable)
+
+Prefer a **stable `sense` on PATH** so agent configs never hardcode a worktree path.
 
 ```bash
-# 1. install
+# 1. clone (or pull) + install CLI + MCP deps into uv tool env
 git clone git@github.com:Roxabi/roxabi-sense.git
-cd roxabi-sense && uv sync
+cd roxabi-sense
+uv tool install -e '.[mcp]'
+# re-run after pull when the package changes:
+#   uv tool install -e '.[mcp]' --force
+# After PyPI release: uv tool install 'roxabi-sense[mcp]'
 
-# 2. enable user service (writes unit under ~/.config/systemd/user/)
-uv run sense install-service
+# 2. data plane — user systemd unit (not the same process as MCP)
+sense install-service
 systemctl --user enable --now roxabi-sense.service
 
-# 3. human CLI
-uv run sense status
-uv run sense recap              # compiled day summary
-uv run sense day --date 2026-07-30  # raw event dump
+# 3. smoke
+sense status                  # last_tick should refresh while daemon is up
+sense recap
+which sense                   # typically ~/.local/bin/sense
 
-# 4. agents (Claude Code / Grok) — MCP stdio server (sense hosts the tools)
-uv sync --extra mcp
-# mcpServers.sense.command = [
-#   "uv", "run", "--extra", "mcp", "--directory", ".../roxabi-sense", "sense", "mcp"
-# ]
+# 4. query plane for agents — MCP stdio (sense is the server)
+# Happy path: PATH entry (no --directory)
+#   Grok  ~/.grok/config.toml:
+#     [mcp_servers.roxabi-sense]
+#     command = "sense"
+#     args = ["mcp"]
+#     enabled = true
+#   Claude:
+#     claude mcp add roxabi-sense -- sense mcp
+# Hardening (optional): use absolute path to sense / uv binary
+# Dev-only fallback (avoid in agent configs):
+#   uv run --extra mcp --directory /path/to/clone sense mcp
 
 # 5. optional NATS (when factory Sentinelle is ready)
 #    sense config set nats.enabled true
-#    sense config set nats.url nats://...
+```
+
+**Trust notes:** agent spawn trusts the `sense` (or `uv`) binary on PATH and the package it runs. Prefer operator-owned install (`uv tool`) over a world-writable clone path. Coarse MCP redaction is default; still only wire agents you trust with activity metadata.
+
+Contributor / in-tree workflow (not for host MCP config):
+
+```bash
+cd roxabi-sense && uv sync --extra mcp
+uv run sense status
 ```
 
 No Podman required on the laptop for V1. M₂ may use the same user unit. M₁ host-sensor path (services snapshot only) is a later collector, not a Quadlet of this whole app.

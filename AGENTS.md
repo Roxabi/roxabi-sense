@@ -77,17 +77,23 @@ Canonical greps:
 ## Stack & commands
 
 ```bash
-uv sync
+# Operator install (PATH-stable — preferred for MCP host configs)
+uv tool install -e '.[mcp]'          # from clone; --force after pull
+sense install-service
+systemctl --user enable --now roxabi-sense.service
+sense status
+sense mcp                            # stdio MCP (agents spawn this)
+
+# Contributor / in-tree
+uv sync --extra mcp
 uv run sense --help
-uv run sense once          # single collect tick
-uv run sense daemon        # foreground collectors
-uv run pytest
-uv run ruff check
-uv run pyright
+uv run sense once
+uv run pytest && uv run ruff check && uv run pyright
 ```
 
 DB default: `~/.local/share/roxabi-sense/sense.db` (override `SENSE_DB`)  
-Config: `~/.config/roxabi-sense/config.toml`
+Config: `~/.config/roxabi-sense/config.toml`  
+Install matrix: README § Install matrix · ARCHITECTURE MCP section
 
 ## Layout (query — do not invent)
 
