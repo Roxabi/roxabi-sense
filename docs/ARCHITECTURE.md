@@ -93,10 +93,18 @@ Default redaction: **coarse** (no titles / media / full paths). Operator may set
 
 ```bash
 # PATH-stable (operator machines) — preferred for agent spawn
-uv tool install -e '.[mcp]'          # from clone; use --force after upgrades
+uv tool install -e '.[mcp]'          # from durable clone; --force after upgrades
 # After release: uv tool install 'roxabi-sense[mcp]'
 sense install-service && systemctl --user enable --now roxabi-sense.service
+sense doctor                         # DoD before wiring hosts
 sense mcp                            # stdio MCP server
+
+# Host registration (canonical snippets — README § MCP host registration):
+#   Grok:   grok mcp add roxabi-sense -- sense mcp
+#           or [mcp_servers.roxabi-sense] command/args in ~/.grok/config.toml
+#   Claude: claude mcp add -s user roxabi-sense -- sense mcp
+#           or project .mcp.json { "command": "sense", "args": ["mcp"] }
+# Never put feature-worktree paths in host config.
 
 # Dev-only (do not put clone paths in production agent configs):
 # uv run --extra mcp --directory /path/to/clone sense mcp

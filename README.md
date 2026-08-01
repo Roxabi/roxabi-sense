@@ -111,24 +111,106 @@ sense status                  # last_tick should refresh while daemon is up
 sense recap
 which sense                   # typically ~/.local/bin/sense
 
-# 4. query plane for agents — MCP stdio (sense is the server)
-# Happy path: PATH entry (no --directory)
-#   Grok  ~/.grok/config.toml:
-#     [mcp_servers.roxabi-sense]
-#     command = "sense"
-#     args = ["mcp"]
-#     enabled = true
-#   Claude:
-#     claude mcp add roxabi-sense -- sense mcp
-# Hardening (optional): use absolute path to sense / uv binary
-# Dev-only fallback (avoid in agent configs):
-#   uv run --extra mcp --directory /path/to/clone sense mcp
-
 # 5. optional NATS (when factory Sentinelle is ready)
 #    sense config set nats.enabled true
 ```
 
-**Trust notes:** agent spawn trusts the `sense` (or `uv`) binary on PATH and the package it runs. Prefer operator-owned install (`uv tool`) over a world-writable clone path. Coarse MCP redaction is default; still only wire agents you trust with activity metadata.
+### MCP host registration (Grok + Claude)
+
+**Prereq:** steps 1–3 above — `which sense` resolves, `sense doctor` is green (daemon + DB + MCP SDK). MCP does **not** start collectors; empty tools ⇒ fix data plane first.
+
+**Happy path:** host spawns `sense mcp` from **PATH** — never a worktree absolute path.
+
+#### Grok
+
+User-global TOML (`~/.grok/config.toml`):
+
+```toml
+[mcp_servers.roxabi-sense]
+command = "sense"
+args = ["mcp"]
+enabled = true
+```
+
+Or CLI (same result; user scope is default):
+
+```bash
+grok mcp add roxabi-sense -- sense mcp
+grok mcp doctor roxabi-sense   # config + spawn smoke
+```
+
+Restart the Grok session (or open a new one) so the server is re-spawned.
+
+#### Claude Code
+
+**CLI** (preferred one-liner):
+
+```bash
+# workstation-wide (recommended for a host sensor)
+claude mcp add -s user roxabi-sense -- sense mcp
+
+# or project-local (writes/approves .mcp.json in the repo)
+claude mcp add -s project roxabi-sense -- sense mcp
+```
+
+**Project** `.mcp.json` (equivalent shape):
+
+```json
+{
+  "mcpServers": {
+    "roxabi-sense": {
+      "command": "sense",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Project-scoped servers may show as pending approval until accepted in Claude. User scope avoids per-repo approval for a machine-local sensor.
+
+**Asymmetry (intentional):** Grok stores servers in TOML (`~/.grok/config.toml` or project `.grok/config.toml`); Claude uses CLI scopes / `.mcp.json` JSON. Both spawn the same stdio command: `sense` + `mcp`.
+
+#### After registration
+
+```bash
+sense doctor          # still green (host config is not a substitute for data plane)
+sense status          # last_tick moving while daemon is up
+```
+
+Then ask the agent for tools (`sense_status`, `active_now`, `what_was_i_doing`, …). If tools are missing: restart the host session; if tools return offline/empty: fix daemon/`sense doctor`, not MCP JSON.
+
+#### Hardening (optional)
+
+Pin absolute binary if PATH is unreliable in the agent environment:
+
+```toml
+# Grok example — replace with real path from `which sense`
+[mcp_servers.roxabi-sense]
+command = "/home/YOU/.local/bin/sense"
+args = ["mcp"]
+enabled = true
+```
+
+#### Dev-only fallback (not for agent configs)
+
+```bash
+# contributor smoke — do not paste worktree paths into host MCP configs
+uv run --extra mcp --directory /path/to/durable/clone sense mcp
+```
+
+Editable `uv tool install -e` must point at a **durable clone** (e.g. `~/projects/roxabi-sense`), not a feature worktree. If you delete that worktree, `sense` breaks with `ModuleNotFoundError` — reinstall:
+
+```bash
+cd ~/projects/roxabi-sense   # durable path
+uv tool install -e '.[mcp]' --force
+sense doctor
+```
+
+#### Privacy / trust
+
+- Default MCP redaction is **coarse** (no window titles / media tracks / full paths). Full detail only via operator config `[mcp] detail = "full"` — not tool-arg escalation (ADR-002).
+- Agent spawn trusts the `sense` binary on PATH. Prefer operator-owned `uv tool` install over a world-writable clone.
+- Only wire agents you trust with activity metadata.
 
 Contributor / in-tree workflow (not for host MCP config):
 
@@ -177,4 +259,4 @@ AGPL-3.0-or-later (same family as `roxabi-cortex`).
 
 ## Status
 
-Scaffold only — no collectors yet. Design intent is frozen enough to implement phase 1 without another product loop.
+Phases 1–3 live (collectors, store, CLI, daemon, MCP stdio). Host registration: README § MCP host registration. NATS still open.
