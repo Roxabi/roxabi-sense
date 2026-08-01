@@ -30,13 +30,22 @@ def handle_idle_msg(
     store: Store,
     cfg: SenseConfig,
     last_activity_ts: str | None,
+    logind_active: bool = False,
 ) -> None:
+    from roxabi_sense.collectors.idle_meta import write_idle_meta
+
     typ = msg.get("type")
     if typ == "ready":
         store.set_meta("idle_watch", "ready")
+        write_idle_meta(
+            store, cfg, wayland_healthy=True, logind_active=False
+        )
         print("sense idle-watch: ready (logind demoted)", flush=True)
     elif typ == "error":
         store.set_meta("idle_watch", "dead")
+        write_idle_meta(
+            store, cfg, wayland_healthy=False, logind_active=logind_active
+        )
         print(f"sense idle-watch error: {msg.get('error')}", flush=True)
     elif typ == "idle" and isinstance(msg.get("idle"), bool):
         idle_flag = bool(msg["idle"])

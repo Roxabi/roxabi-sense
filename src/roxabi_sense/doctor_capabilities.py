@@ -41,6 +41,9 @@ def capabilities(cfg: SenseConfig) -> dict[str, Capability]:
                     "focus_status",
                     "atspi_agent",
                     "idle_watch",
+                    "idle_backend",
+                    "idle_status",
+                    "idle_chain_reason",
                     "session_type",
                     "desktop_family",
                 ):
@@ -114,6 +117,13 @@ def _idle_capability(cfg: SenseConfig, meta: dict[str, str]) -> Capability:
             backend="off",
             reason="idle disabled in config",
         )
+    # Prefer explicit chain meta written by daemon (#45)
+    backend = meta.get("idle_backend")
+    status = meta.get("idle_status")
+    if backend and status:
+        reason = meta.get("idle_chain_reason") or f"idle_watch={meta.get('idle_watch', '?')}"
+        return Capability(status=status, backend=backend, reason=reason)
+
     watch = meta.get("idle_watch")
     if watch == "ready":
         return Capability(

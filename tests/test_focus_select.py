@@ -33,7 +33,7 @@ def test_detect_hyprland() -> None:
         }
     )
     assert info.desktop_family == "wlroots"
-    assert candidate_sources(info) == ["atspi", "x11", "noop"]
+    assert candidate_sources(info) == ["wlr", "atspi", "x11", "noop"]
 
 
 def test_detect_gnome_and_unknown() -> None:
