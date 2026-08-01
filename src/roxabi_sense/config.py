@@ -27,6 +27,7 @@ DEFAULT_PROCESS_NAMES = (
 )
 
 NameEventsMode = Literal["off", "throttled", "on"]
+McpDetail = Literal["coarse", "full"]
 
 
 @dataclass
@@ -58,6 +59,8 @@ class SenseConfig:
     focus: bool = True
     process_names: tuple[str, ...] = DEFAULT_PROCESS_NAMES
     machine: str = "laptop"
+    # MCP / query export detail — ADR-002: full only via config, not tool args
+    mcp_detail: McpDetail = "coarse"
 
 
 def _parse_name_events(raw: object) -> NameEventsMode:
@@ -95,8 +98,9 @@ def _apply_toml(cfg: SenseConfig, data: dict) -> None:
     daemon = data.get("daemon") or {}
     collectors = data.get("collectors") or {}
     nats = data.get("nats") or {}
-    if not all(isinstance(x, dict) for x in (daemon, collectors, nats)):
-        raise ConfigError("daemon/collectors/nats must be tables")
+    mcp = data.get("mcp") or {}
+    if not all(isinstance(x, dict) for x in (daemon, collectors, nats, mcp)):
+        raise ConfigError("daemon/collectors/nats/mcp must be tables")
     if "poll_seconds" in daemon:
         cfg.poll_seconds = float(daemon["poll_seconds"])
     if "db_path" in daemon:
@@ -140,3 +144,8 @@ def _apply_toml(cfg: SenseConfig, data: dict) -> None:
         cfg.process_names = tuple(str(x) for x in raw_names)
     if "machine" in nats:
         cfg.machine = str(nats["machine"])
+    if "detail" in mcp:
+        d = str(mcp["detail"]).strip().lower()
+        if d not in {"coarse", "full"}:
+            raise ConfigError("mcp.detail must be 'coarse' or 'full'")
+        cfg.mcp_detail = d  # type: ignore[assignment]

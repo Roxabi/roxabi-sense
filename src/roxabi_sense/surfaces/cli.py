@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     p_recap.add_argument("--json", action="store_true", help="JSON object output")
 
     sub.add_parser("daemon", help="Run collectors in foreground")
-    sub.add_parser("mcp", help="Run MCP stdio server (not implemented)")
+    sub.add_parser("mcp", help="Run MCP stdio server (uv sync --extra mcp)")
     sub.add_parser("install-service", help="Install systemd --user unit")
     sub.add_parser("once", help="Single collect tick then exit")
     p_tr = sub.add_parser("atspi-trace", help="AT-SPI empirical JSONL trace status")
@@ -107,11 +107,9 @@ def main(argv: list[str] | None = None) -> int:
         print(msg)
         return code
     if args.cmd == "mcp":
-        print(
-            f"sense {__version__}: command 'mcp' not implemented yet",
-            file=sys.stderr,
-        )
-        return 2
+        from roxabi_sense.surfaces.mcp import run_mcp
+
+        return run_mcp(cfg, transport="stdio")
     if args.cmd == "atspi-trace":
         from roxabi_sense.atspi.trace_log import default_trace_path, summarize_trace
 
