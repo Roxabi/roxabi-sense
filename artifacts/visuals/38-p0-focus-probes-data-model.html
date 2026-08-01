@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>P0 focus — data model</title>
+<style>
+  :root { --bg:#0f1218; --panel:#1a2030; --text:#e8ecf4; --mut:#8b95a8; --line:#2a3348; --accent:#7aa2ff; --ok:#3dd68c; --amber:#f5a524; }
+  body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); padding:2rem; max-width:960px; }
+  h1 { font-size:1.2rem; margin:0 0 .5rem; }
+  .sub { color:var(--mut); margin-bottom:1.2rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:.75rem; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.75rem; }
+  .card h2 { font-size:.85rem; margin:0 0 .4rem; color:var(--accent); font-family:ui-monospace,monospace; }
+  .f { font:12px ui-monospace,monospace; color:var(--mut); display:block; margin:.15rem 0; }
+  .f b { color:var(--text); font-weight:500; }
+  .frozen { border-color:var(--ok); }
+  .mut { border-color:var(--amber); }
+  legend { margin-top:1rem; color:var(--mut); font-size:12px; }
+</style>
+</head>
+<body>
+  <h1>Focus data model (P0)</h1>
+  <p class="sub">Frozen event shape · mutable runtime meta</p>
+  <div class="grid">
+    <div class="card frozen">
+      <h2>FocusWindow</h2>
+      <span class="f"><b>app</b>: str</span>
+      <span class="f"><b>title</b>: str</span>
+      <span class="f"><b>active</b>: bool</span>
+      <span class="f"><b>role</b>: str</span>
+      <span class="f"><b>pid</b>: int?</span>
+    </div>
+    <div class="card frozen">
+      <h2>kind=focus payload</h2>
+      <span class="f"><b>app, title, pid?</b></span>
+      <span class="f"><b>source</b>: atspi|x11|wlr|kde|noop</span>
+      <span class="f"><b>title_raw?</b> agent?</span>
+    </div>
+    <div class="card mut">
+      <h2>meta (daemon)</h2>
+      <span class="f"><b>focus_backend</b></span>
+      <span class="f"><b>focus_status</b> available|degraded|unavailable</span>
+      <span class="f"><b>session_type</b> x11|wayland|unknown</span>
+      <span class="f"><b>desktop_family</b></span>
+      <span class="f"><b>last_focus_path</b> event|cmd|backup|poll</span>
+    </div>
+    <div class="card frozen">
+      <h2>FocusProbe</h2>
+      <span class="f"><b>source</b></span>
+      <span class="f"><b>probe()</b> → bool</span>
+      <span class="f"><b>get_active()</b> → list[FocusWindow]</span>
+    </div>
+    <div class="card mut">
+      <h2>DoctorReport.capabilities</h2>
+      <span class="f"><b>focus</b>: {status, backend, reason}</span>
+      <span class="f"><b>idle</b>: {status, backend, reason}</span>
+    </div>
+  </div>
+  <p class="legend">Green border = stable contract · amber = runtime / operator surface</p>
+</body>
+</html>
