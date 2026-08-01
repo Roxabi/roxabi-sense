@@ -78,12 +78,16 @@ Canonical greps:
 
 ```bash
 # Operator install (PATH-stable — preferred for MCP host configs)
-uv tool install -e '.[mcp]'          # from clone; --force after pull
+uv tool install -e '.[mcp]'          # from durable clone; --force after pull
 sense install-service
 systemctl --user enable --now roxabi-sense.service
 sense doctor                         # DoD: db + last_tick + mcp SDK
 sense status
 sense mcp                            # stdio MCP (agents spawn this)
+
+# Host MCP (happy path — PATH only; full snippets in README)
+#   grok mcp add roxabi-sense -- sense mcp
+#   claude mcp add -s user roxabi-sense -- sense mcp
 
 # Contributor / in-tree
 uv sync --extra mcp
@@ -94,7 +98,7 @@ uv run pytest && uv run ruff check && uv run pyright
 
 DB default: `~/.local/share/roxabi-sense/sense.db` (override `SENSE_DB`)  
 Config: `~/.config/roxabi-sense/config.toml`  
-Install matrix: README § Install matrix · ARCHITECTURE MCP section
+Install matrix: README § Install matrix · Host MCP: README § MCP host registration · ARCHITECTURE MCP section
 
 ## Layout (query — do not invent)
 
