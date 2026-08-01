@@ -9,11 +9,11 @@ from roxabi_sense.store import Store
 
 def _patch_enrich(monkeypatch) -> None:
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
         lambda app, pid: "ghostty" if app == "Unnamed" else app,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
         lambda pid, app=None, title=None, sessions=None, tree=None, panes=None: (
             {
                 "agent": "grok",
@@ -27,11 +27,11 @@ def _patch_enrich(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
+        "roxabi_sense.collectors.focus.collector.children_map",
         lambda: {},
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.list_tmux_agent_panes",
+        "roxabi_sense.collectors.focus.collector.list_tmux_agent_panes",
         lambda: [],
     )
 
@@ -84,19 +84,19 @@ def test_tick_focus_skips_desktop_snapshot(tmp_path: Path, monkeypatch) -> None:
         ]
 
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
         lambda app, pid: app,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
+        "roxabi_sense.collectors.focus.collector.children_map",
         lambda: {},
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.list_tmux_agent_panes",
+        "roxabi_sense.collectors.focus.collector.list_tmux_agent_panes",
         lambda: [],
     )
     store = Store(tmp_path / "s.db")
@@ -132,19 +132,19 @@ def test_enrich_lists_tmux_once_for_many_windows(tmp_path: Path, monkeypatch) ->
         return None
 
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
         lambda app, pid: app,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
         fake_link,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
+        "roxabi_sense.collectors.focus.collector.children_map",
         lambda: {},
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.list_tmux_agent_panes",
+        "roxabi_sense.collectors.focus.collector.list_tmux_agent_panes",
         fake_tmux,
     )
     store = Store(tmp_path / "s.db")
@@ -171,15 +171,15 @@ def test_tick_focus_uses_probe_focus_not_probe(tmp_path: Path, monkeypatch) -> N
         return [WindowInfo(app="ghostty", title="A", active=True, role="frame", pid=1)]
 
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
         lambda app, pid: app,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
+        "roxabi_sense.collectors.focus.collector.children_map",
         lambda: {},
     )
     store = Store(tmp_path / "s.db")
@@ -201,15 +201,15 @@ def test_tick_desktop_writes_snapshot(tmp_path: Path, monkeypatch) -> None:
         ]
 
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
         lambda app, pid: app,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
+        "roxabi_sense.collectors.focus.collector.children_map",
         lambda: {},
     )
     store = Store(tmp_path / "s.db")
@@ -238,19 +238,19 @@ def test_agent_attach_updates_focus_key(tmp_path: Path, monkeypatch) -> None:
         ]
 
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
         lambda app, pid: app,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
         lambda pid, app=None, title=None, sessions=None, tree=None, panes=None: state["agent"],
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
+        "roxabi_sense.collectors.focus.collector.children_map",
         lambda: {},
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.list_tmux_agent_panes",
+        "roxabi_sense.collectors.focus.collector.list_tmux_agent_panes",
         lambda: [],
     )
     store = Store(tmp_path / "s.db")
@@ -292,15 +292,15 @@ def test_desktop_only_change_no_new_focus(tmp_path: Path, monkeypatch) -> None:
         ]
 
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
         lambda app, pid: app,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
+        "roxabi_sense.collectors.focus.collector.children_map",
         lambda: {},
     )
     store = Store(tmp_path / "s.db")
@@ -332,15 +332,15 @@ def test_focus_writes_on_app_change(tmp_path: Path, monkeypatch) -> None:
         ]
 
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
         lambda app, pid: app,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
+        "roxabi_sense.collectors.focus.collector.children_map",
         lambda: {},
     )
     store = Store(tmp_path / "s.db")
@@ -374,15 +374,15 @@ def test_default_probe_timeout(monkeypatch) -> None:
 
 def test_apply_from_agent_payload(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.resolve_app_name",
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
         lambda app, pid: app,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.find_agent_link",
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus_atspi.children_map",
+        "roxabi_sense.collectors.focus.collector.children_map",
         lambda: {},
     )
     store = Store(tmp_path / "s.db")

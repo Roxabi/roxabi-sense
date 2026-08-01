@@ -11,6 +11,13 @@ from typing import Any, Literal
 
 from roxabi_sense import __version__
 from roxabi_sense.config import SenseConfig
+from roxabi_sense.doctor_capabilities import (
+    Capability,
+    capability_checks,
+)
+from roxabi_sense.doctor_capabilities import (
+    capabilities as load_capabilities,
+)
 from roxabi_sense.install_service import unit_path
 from roxabi_sense.paths import default_config_path
 from roxabi_sense.report import load_status_snapshot
@@ -18,7 +25,6 @@ from roxabi_sense.report.presence import age_seconds
 from roxabi_sense.store import SCHEMA_VERSION, SchemaVersionError
 
 CheckStatus = Literal["ok", "warn", "fail"]
-
 
 @dataclass(frozen=True)
 class Check:
@@ -31,6 +37,7 @@ class Check:
         return asdict(self)
 
 
+
 @dataclass(frozen=True)
 class DoctorReport:
     version: str
@@ -38,25 +45,34 @@ class DoctorReport:
     fail_count: int
     warn_count: int
     checks: list[Check]
+    capabilities: dict[str, Capability] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "version": self.version,
             "ok": self.ok,
             "fail_count": self.fail_count,
             "warn_count": self.warn_count,
             "checks": [c.to_dict() for c in self.checks],
         }
-
+        if self.capabilities is not None:
+            out["capabilities"] = {k: v.to_dict() for k, v in self.capabilities.items()}
+        return out
 
 def run_doctor(cfg: SenseConfig) -> DoctorReport:
     """Collect install + data-plane + MCP readiness checks."""
+    caps = load_capabilities(cfg)
+    cap_checks = [
+        Check(name=c.name, status=c.status, detail=c.detail, hint=c.hint)
+        for c in capability_checks(caps)
+    ]
     checks: list[Check] = [
         Check(name="package", status="ok", detail=f"roxabi-sense {__version__}"),
         _check_binary(),
         _check_config(cfg),
         _check_db(cfg.db_path),
         *_check_store_and_presence(cfg),
+        *cap_checks,
         _check_unit_file(),
         _check_systemd_unit(),
         _check_mcp_sdk(),
@@ -69,8 +85,8 @@ def run_doctor(cfg: SenseConfig) -> DoctorReport:
         fail_count=fails,
         warn_count=warns,
         checks=checks,
+        capabilities=caps,
     )
-
 
 def format_doctor_text(report: DoctorReport) -> str:
     lines = [
@@ -89,11 +105,9 @@ def format_doctor_text(report: DoctorReport) -> str:
         lines.append("Agents should not trust timeline tools until FAIL items are fixed.")
     return "\n".join(lines)
 
-
 def doctor_exit_code(report: DoctorReport) -> int:
     """0 = no fails (warns allowed); 1 = at least one fail."""
     return 0 if report.ok else 1
-
 
 def _check_binary() -> Check:
     which = shutil.which("sense")
@@ -106,7 +120,6 @@ def _check_binary() -> Check:
         hint="uv tool install -e '.[mcp]'  # see README install matrix",
     )
 
-
 def _check_config(cfg: SenseConfig) -> Check:
     path = default_config_path()
     if not path.is_file():
@@ -116,7 +129,6 @@ def _check_config(cfg: SenseConfig) -> Check:
         status="ok",
         detail=f"loaded {path}  mcp.detail={cfg.mcp_detail}",
     )
-
 
 def _check_db(db_path: Path) -> Check:
     if not db_path.is_file():
@@ -141,7 +153,6 @@ def _check_db(db_path: Path) -> Check:
             hint="check ownership/permissions on the DB and parent dir",
         )
     return Check(name="db", status="ok", detail=f"path={db_path}")
-
 
 def _check_store_and_presence(cfg: SenseConfig) -> list[Check]:
     try:
@@ -231,7 +242,6 @@ def _check_store_and_presence(cfg: SenseConfig) -> list[Check]:
         )
     return out
 
-
 def _check_unit_file() -> Check:
     path = unit_path()
     if path.is_file():
@@ -242,7 +252,6 @@ def _check_unit_file() -> Check:
         detail=f"missing {path}",
         hint="sense install-service",
     )
-
 
 def _check_systemd_unit() -> Check:
     systemctl = shutil.which("systemctl")
@@ -267,7 +276,6 @@ def _check_systemd_unit() -> Check:
         detail=f"roxabi-sense.service → {state}",
         hint="systemctl --user enable --now roxabi-sense.service",
     )
-
 
 def _check_mcp_sdk() -> Check:
     try:

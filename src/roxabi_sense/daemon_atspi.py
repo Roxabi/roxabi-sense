@@ -7,7 +7,7 @@ from typing import Any
 
 from roxabi_sense.atspi import FocusAtspiAgent
 from roxabi_sense.atspi.trace_log import AtspiTraceWriter, default_trace_path
-from roxabi_sense.collectors.focus_atspi import FocusAtspiCollector
+from roxabi_sense.collectors.focus import FocusCollector
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.store import Store
 
@@ -49,11 +49,11 @@ def make_trace_writer(cfg: SenseConfig) -> AtspiTraceWriter | None:
 
 
 def apply_probe_result(
-    focus: FocusAtspiCollector,
+    focus: FocusCollector,
     store: Store,
     msg: dict[str, Any],
     *,
-    source: str,
+    path: str,
 ) -> int:
     mode_s = str(msg.get("mode") or "focus")
     if mode_s not in ("focus", "desktop", "full"):
@@ -69,13 +69,14 @@ def apply_probe_result(
             wins,  # type: ignore[arg-type]
             mode=mode_s,  # type: ignore[arg-type]
             probe_ms=probe_ms,
+            source="atspi",
         )
 
 
 def handle_atspi_msg(
     msg: dict[str, Any],
     *,
-    focus: FocusAtspiCollector | None,
+    focus: FocusCollector | None,
     store: Store,
     on_activity: Callable[[], None],
     trace: AtspiTraceWriter | None = None,
@@ -95,13 +96,13 @@ def handle_atspi_msg(
     mode = str(msg.get("mode") or "focus")
     reason = msg.get("reason")
     if reason == "cmd" and mode == "desktop":
-        source = "backup"
+        path = "backup"
     elif reason in ("cmd", "once"):
-        source = "cmd"
+        path = "cmd"
     else:
-        source = "event"
-    n = apply_probe_result(focus, store, msg, source=source)
+        path = "event"
+    n = apply_probe_result(focus, store, msg, path=path)
     on_activity()
     if n:
-        store.set_meta("last_focus_source", source)
-        print(f"sense focus-{source}: +{n} (total={store.count()})", flush=True)
+        store.set_meta("last_focus_path", path)
+        print(f"sense focus-{path}: +{n} (total={store.count()})", flush=True)
