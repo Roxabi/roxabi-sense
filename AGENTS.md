@@ -81,6 +81,7 @@ Canonical greps:
 uv tool install -e '.[mcp]'          # from clone; --force after pull
 sense install-service
 systemctl --user enable --now roxabi-sense.service
+sense doctor                         # DoD: db + last_tick + mcp SDK
 sense status
 sense mcp                            # stdio MCP (agents spawn this)
 
