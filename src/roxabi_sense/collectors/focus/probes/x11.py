@@ -13,6 +13,9 @@ from roxabi_sense.collectors.focus.protocol import FocusWindow
 
 RunFn = Callable[..., subprocess.CompletedProcess[str]]
 
+_XPROP_CANDIDATES = ("/usr/bin/xprop", "/bin/xprop")
+_WID_RE = re.compile(r"^0x[0-9a-fA-F]+$")
+
 
 def _default_run(
     args: list[str], *, timeout: float = 2.0
@@ -43,14 +46,28 @@ class X11FocusProbe:
     def _environ(self) -> Mapping[str, str]:
         return self._env if self._env is not None else os.environ
 
+    def _xprop_bin(self) -> str | None:
+        """Absolute path to xprop (prefer known paths, then which)."""
+        for cand in _XPROP_CANDIDATES:
+            if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                return cand
+        found = self._which("xprop")
+        if found and os.path.isabs(found):
+            return found
+        if found:
+            # which may return a relative path — resolve via PATH once
+            return found if os.path.isfile(found) else None
+        return None
+
     def probe(self) -> bool:
         display = self._environ().get("DISPLAY")
         if not display:
             return False
-        if not self._which("xprop"):
+        xprop = self._xprop_bin()
+        if not xprop:
             return False
         try:
-            proc = self._run(["xprop", "-root", "_NET_ACTIVE_WINDOW"], timeout=2.0)
+            proc = self._run([xprop, "-root", "_NET_ACTIVE_WINDOW"], timeout=2.0)
         except (OSError, subprocess.TimeoutExpired):
             return False
         return proc.returncode == 0 and bool(proc.stdout.strip())
@@ -65,19 +82,22 @@ class X11FocusProbe:
         return self.get_active()
 
     def _active_window(self) -> FocusWindow | None:
-        if not self.probe():
+        xprop = self._xprop_bin()
+        if not xprop or not self._environ().get("DISPLAY"):
             return None
         try:
-            root = self._run(["xprop", "-root", "_NET_ACTIVE_WINDOW"], timeout=2.0)
+            root = self._run([xprop, "-root", "_NET_ACTIVE_WINDOW"], timeout=2.0)
         except (OSError, subprocess.TimeoutExpired):
             return None
+        if root.returncode != 0:
+            return None
         wid = _parse_window_id(root.stdout)
-        if wid is None:
+        if wid is None or not _WID_RE.fullmatch(wid):
             return None
         try:
             props = self._run(
                 [
-                    "xprop",
+                    xprop,
                     "-id",
                     wid,
                     "WM_CLASS",
