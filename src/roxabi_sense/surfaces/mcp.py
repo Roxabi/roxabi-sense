@@ -63,6 +63,11 @@ def build_mcp_server(cfg: SenseConfig):
         """Compiled day recap (apps, away, meetings, agents) as JSON."""
         return q.day_recap(day)
 
+    @mcp.tool()
+    def top_apps(day: str | None = None, limit: int = 20) -> dict[str, Any]:
+        """Ranked app minutes for a local day (no titles — safe for coarse MCP)."""
+        return q.top_apps(day, limit=limit)
+
     return mcp
 
 
@@ -112,6 +117,11 @@ def tool_catalog() -> list[dict[str, str]]:
             "name": "day_recap",
             "http": "GET /v1/recap?day=",
             "returns": "compiled day recap JSON",
+        },
+        {
+            "name": "top_apps",
+            "http": "GET /v1/top-apps?day=&limit=",
+            "returns": "ranked app seconds/minutes for day",
         },
     ]
 

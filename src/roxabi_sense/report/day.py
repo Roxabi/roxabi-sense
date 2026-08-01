@@ -29,6 +29,7 @@ from roxabi_sense.report.segments import (
     sum_by,
     top_titles,
 )
+from roxabi_sense.report.top_apps import AppDwell, session_shape, top_apps
 from roxabi_sense.store import Store
 
 _DAY_EVENT_LIMIT = 50_000
@@ -49,7 +50,8 @@ class DayRecap:
     away_total_s: float
     meeting_total_s: float
     idle_mode: str  # "degraded-gap" | "none"
-    time_by_app: list[tuple[str, float]]
+    time_by_app: list[tuple[str, float]]  # legacy [(app, seconds)]
+    top_apps: list[AppDwell]  # ranked app + seconds/minutes/share (#47)
     time_by_repo: list[tuple[str, float]]
     top_titles: list[tuple[str, float, str]]
     agent_sessions: list[AgentSessionRow]
@@ -57,6 +59,7 @@ class DayRecap:
     media: list[MediaTrack]
     idle_events: int
     hour_apps: list[tuple[str, list[tuple[str, float]]]]
+    session_shape: str | None  # deep|steady|fragmented|drifted|None (#48)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -86,7 +89,8 @@ def compile_day_recap(
     focus_ev = [e for e in events if e.kind == "focus"]
     segments = focus_segments(focus_ev, away, horizon=horizon)
 
-    time_by_app = sum_by(segments, key=lambda s: s.app)
+    apps = top_apps(segments, limit=20)
+    time_by_app = [(a.app, a.seconds) for a in apps]
     time_by_repo = sum_by(
         [s for s in segments if s.cwd],
         key=lambda s: _repo_label(s.cwd or ""),
@@ -121,6 +125,7 @@ def compile_day_recap(
         meeting_total_s=sum(a.duration_s for a in meetings),
         idle_mode=idle_mode,
         time_by_app=time_by_app,
+        top_apps=apps,
         time_by_repo=time_by_repo,
         top_titles=top_titles(segments, limit=12),
         agent_sessions=agent_sessions(events),
@@ -128,6 +133,7 @@ def compile_day_recap(
         media=media_tracks(events),
         idle_events=kind_counts.get("idle", 0),
         hour_apps=hour_apps(segments, away),
+        session_shape=session_shape(segments, away),
     )
 
 
@@ -143,6 +149,8 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
         totals += f"   meeting={_fmt_dur(recap.meeting_total_s)}"
     lines.append(f"sense recap  {recap.day}")
     lines.append(f"window: {span}   events={recap.event_count}   {totals}")
+    if recap.session_shape:
+        lines.append(f"session_shape: {recap.session_shape}")
     if recap.kind_counts:
         kinds = "  ".join(f"{k}={v}" for k, v in list(recap.kind_counts.items())[:8])
         lines.append(f"kinds: {kinds}")
@@ -173,8 +181,15 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
         lines.append("  (none)")
 
     lines.append("")
-    lines.append(f"Focus time (dwell ≥{MIN_DWELL_S:.0f}s, away cut out)")
-    if recap.time_by_app:
+    lines.append(f"Top apps (dwell ≥{MIN_DWELL_S:.0f}s, away cut out)")
+    if recap.top_apps:
+        for row in recap.top_apps[:12]:
+            pct = row.share * 100
+            lines.append(
+                f"  {_pad(row.app, 22)} {_fmt_dur(row.seconds):>8}"
+                f"  ({row.minutes:g}m)  {pct:5.1f}%"
+            )
+    elif recap.time_by_app:
         for app, secs in recap.time_by_app[:12]:
             pct = (secs / tracked * 100) if tracked else 0
             lines.append(f"  {_pad(app, 22)} {_fmt_dur(secs):>8}  {pct:5.1f}%")

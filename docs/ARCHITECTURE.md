@@ -85,6 +85,7 @@ It does **not** call an external MCP.
 | `what_was_i_doing` | `GET /v1/timeline?day=` | Day event summaries |
 | `agent_sessions` | `GET /v1/sessions?day=` | Sessions for day |
 | `day_recap` | `GET /v1/recap?day=` | Compiled recap JSON |
+| `top_apps` | `GET /v1/top-apps?day=` | Ranked app seconds/minutes (local aggregate) |
 
 Default redaction: **coarse** (no titles / media / full paths). Operator may set
 `[mcp] detail = "full"` in config — **not** via tool arguments (ADR-002).
