@@ -9,6 +9,7 @@ from typing import Any
 
 from roxabi_sense.util.proc import children_map, descendants, read_comm, read_cwd
 from roxabi_sense.util.session_registry import load_all_sessions, load_grok_sessions
+from roxabi_sense.util.titles import normalize_title
 
 _AGENT_COMMS = frozenset({"grok", "claude"})
 _TERMINAL_APPS = frozenset({"ghostty", "unnamed"})
@@ -16,12 +17,17 @@ _TMUX = next(
     (p for p in ("/usr/bin/tmux", "/usr/local/bin/tmux") if Path(p).is_file()),
     None,
 )
+# Min core title length before substring / prefix pane matches count
+_PANE_TITLE_MIN = 12
+# Unique pane_title win needs this score margin over #2
+_PANE_TITLE_MARGIN = 15
 
 # Re-export for callers that imported load_grok_sessions from here
 __all__ = [
     "find_agent_link",
     "list_tmux_agent_panes",
     "load_grok_sessions",
+    "score_pane_title",
 ]
 
 
@@ -90,10 +96,18 @@ def _find_via_process_tree(
 
 
 def list_tmux_agent_panes() -> list[dict[str, Any]]:
-    """Panes whose current command is grok/claude."""
+    """Panes whose current command is grok/claude.
+
+    Includes ``pane_title`` (often equals Ghostty/AT-SPI window title) so multi-pane
+    layouts can disambiguate without relying on repo basename in the title.
+    """
     if not _TMUX:
         return []
-    fmt = "#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{session_attached}"
+    # pane_title last: may contain spaces; we still use tab-split (titles rarely have tabs)
+    fmt = (
+        "#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t"
+        "#{session_attached}\t#{pane_title}"
+    )
     try:
         proc = subprocess.run(
             [_TMUX, "list-panes", "-a", "-F", fmt],
@@ -112,6 +126,10 @@ def list_tmux_agent_panes() -> list[dict[str, Any]]:
         if len(parts) < 4:
             continue
         pid_s, cmd, path, attached = parts[0], parts[1], parts[2], parts[3]
+        pane_title = parts[4] if len(parts) > 4 else ""
+        # re-join if title itself contained tabs (defensive)
+        if len(parts) > 5:
+            pane_title = "\t".join(parts[4:])
         if cmd not in _AGENT_COMMS:
             continue
         panes.append(
@@ -120,9 +138,55 @@ def list_tmux_agent_panes() -> list[dict[str, Any]]:
                 "command": cmd,
                 "path": path,
                 "attached": attached == "1",
+                "pane_title": pane_title,
             }
         )
     return panes
+
+
+def _title_core(title: str) -> str:
+    """Lowercase normalized title without trailing agent suffix."""
+    t = normalize_title(title or "").lower().strip()
+    for suf in (" - grok", " - claude"):
+        if t.endswith(suf):
+            t = t[: -len(suf)].strip()
+            break
+    # Collapse ellipsis variants for prefix compares
+    t = t.rstrip(".…").rstrip()
+    return t
+
+
+def score_pane_title(focus_title: str, pane_title: str) -> int:
+    """
+    How well a focus window title matches a tmux pane_title.
+
+    Ghostty/AT-SPI titles usually mirror ``#{pane_title}`` (after spinner strip).
+    Returns 0–100; 0 means no usable match.
+    """
+    a = _title_core(focus_title)
+    b = _title_core(pane_title)
+    if not a or not b:
+        return 0
+    if a == b:
+        return 100
+    # Full normalized strings (with agent suffix already stripped)
+    if len(a) >= _PANE_TITLE_MIN and len(b) >= _PANE_TITLE_MIN:
+        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+        # Truncated titles: one is prefix of the other (ellipsis cut)
+        if longer.startswith(shorter) and len(shorter) >= _PANE_TITLE_MIN:
+            return 90
+        if shorter in longer and len(shorter) >= _PANE_TITLE_MIN:
+            return 80
+    # "Running: Ask: … - Parent Session Title" → parent may equal other pane core
+    if " - " in a:
+        tail = a.rsplit(" - ", 1)[-1].strip()
+        if tail and len(tail) >= _PANE_TITLE_MIN and (tail == b or b.startswith(tail) or tail in b):
+            return 70
+    if " - " in b:
+        tail = b.rsplit(" - ", 1)[-1].strip()
+        if tail and len(tail) >= _PANE_TITLE_MIN and (tail == a or a.startswith(tail) or tail in a):
+            return 70
+    return 0
 
 
 def _score_title_cwd(title: str, cwd: str) -> int:
@@ -174,6 +238,70 @@ def _resolve_pane_session(
     return None
 
 
+def _link_from_pane(
+    pane: dict[str, Any],
+    sessions: list[dict[str, Any]],
+    *,
+    tree: dict[int, list[int]],
+    match: str,
+) -> dict[str, Any]:
+    """Build agent link from a concrete pane (session registry if possible)."""
+    by_pid = _session_by_pid(sessions)
+    by_cwd: dict[str, dict[str, Any]] = {}
+    for s in sessions:
+        cwd = s.get("cwd")
+        if not cwd:
+            continue
+        by_cwd[str(cwd)] = s
+        try:
+            by_cwd[str(Path(str(cwd)).resolve())] = s
+        except OSError:
+            pass
+    resolved = _resolve_pane_session(pane, by_pid=by_pid, by_cwd=by_cwd, tree=tree)
+    if resolved is not None:
+        s, struct_match = resolved
+        return _link_from_session(s, match=f"{match}+{struct_match}")
+    # Session registry miss: still emit pane path (cwd authority for time_by_repo)
+    path = str(pane.get("path") or "") or None
+    cmd = str(pane.get("command") or "grok")
+    return {
+        "agent": cmd if cmd in _AGENT_COMMS else "grok",
+        "session_id": None,
+        "cwd": path,
+        "pid": pane.get("pane_pid"),
+        "match": match,
+    }
+
+
+def _find_via_pane_title(
+    title: str,
+    sessions: list[dict[str, Any]],
+    *,
+    panes: list[dict[str, Any]],
+    tree: dict[int, list[int]],
+) -> dict[str, Any] | None:
+    """Disambiguate multi-pane Ghostty via AT-SPI title ↔ tmux pane_title."""
+    if not title or not panes:
+        return None
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for pane in panes:
+        pt = str(pane.get("pane_title") or "")
+        sc = score_pane_title(title, pt)
+        if sc > 0:
+            scored.append((sc, pane))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    best_sc, best_pane = scored[0]
+    second_sc = scored[1][0] if len(scored) > 1 else 0
+    # Unique high-confidence pane title
+    if best_sc >= 70 and (len(scored) == 1 or best_sc >= second_sc + _PANE_TITLE_MARGIN):
+        return _link_from_pane(
+            best_pane, sessions, tree=tree, match="tmux_pane_title"
+        )
+    return None
+
+
 def _find_via_tmux(
     title: str,
     sessions: list[dict[str, Any]],
@@ -183,7 +311,17 @@ def _find_via_tmux(
 ) -> dict[str, Any] | None:
     """Match focused terminal to session via tmux pane path/pid (+ title break ties)."""
     agent_panes = panes if panes is not None else list_tmux_agent_panes()
-    if not agent_panes or not sessions:
+    if not agent_panes:
+        return None
+
+    cmap = tree if tree is not None else children_map()
+
+    # 0) pane_title ↔ window title (works with 10+ parallel grok panes)
+    hit = _find_via_pane_title(title, sessions, panes=agent_panes, tree=cmap)
+    if hit is not None:
+        return hit
+
+    if not sessions:
         return None
 
     by_pid = _session_by_pid(sessions)
@@ -197,7 +335,6 @@ def _find_via_tmux(
             by_cwd[str(Path(str(cwd)).resolve())] = s
         except OSError:
             pass
-    cmap = tree if tree is not None else children_map()
 
     scored: list[tuple[int, int, dict[str, Any], str]] = []
     for pane in agent_panes:
@@ -239,7 +376,9 @@ def find_agent_link(
     Link a focused window to a Grok/Claude session.
 
     1) Process tree under window pid (rare for Ghostty→tmux layout)
-    2) tmux panes (command=grok|claude) via pane_pid descendants + path==cwd
+    2) tmux panes (command=grok|claude):
+       a) ``pane_title`` ↔ focus title (multi-pane disambiguation)
+       b) pane_pid descendants + path==cwd (+ basename title score)
 
     Pass ``panes`` (and ``sessions`` / ``tree``) from a batch enrich so
     ``list_tmux_agent_panes`` runs once per tick, not once per window.
