@@ -1,0 +1,46 @@
+{
+  "status": "completed",
+  "project": "roxabi-sense",
+  "playbook": "multi-agent-audit-playbook.md@1.1",
+  "started": "2026-07-31T23:44:00Z",
+  "finished": "2026-08-01T00:30:00Z",
+  "scale": "small (~55 py files, ~18 agents)",
+  "completed_agents": [
+    "axial-structural",
+    "axial-adr-review",
+    "arch-P1",
+    "arch-P2",
+    "arch-P3",
+    "arch-P4",
+    "sec-P12",
+    "sec-P34",
+    "smells-src",
+    "smells-tests",
+    "types-src",
+    "async-src",
+    "errors-src",
+    "test-quality-T1",
+    "tech-debt-src",
+    "cocoindex-validate",
+    "synthesis"
+  ],
+  "pending_agents": [],
+  "current_wave": 8,
+  "waves": {
+    "1": ["axial-structural", "axial-adr-review"],
+    "2": ["arch-P1", "arch-P2", "arch-P3", "arch-P4"],
+    "3": ["sec-P12", "sec-P34"],
+    "4": ["smells-src", "smells-tests"],
+    "5": ["types-src", "async-src", "errors-src"],
+    "6": ["test-quality-T1", "tech-debt-src"],
+    "7": ["cocoindex-validate"],
+    "8": ["synthesis"]
+  },
+  "verify": {
+    "pyright": "0 errors, 0 warnings",
+    "pytest": "89 passed in 1.72s",
+    "cocoindex": "N/A (not initialized)"
+  },
+  "summary": "artifacts/analyses/quality-audit/AUDIT-SUMMARY.md",
+  "debt_score": 74
+}
