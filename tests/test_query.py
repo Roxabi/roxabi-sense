@@ -55,6 +55,9 @@ def test_active_now_and_timeline(tmp_path: Path) -> None:
     assert "title" not in now["focus"]  # coarse redaction
     assert now["agent_sessions"]
     assert now["agent_sessions"][0]["cwd"] == "proj"  # basename only
+    assert "annotations" in now
+    assert now["annotations"]["meeting"]["phase"] is None
+    assert "fidelity" in now["annotations"]["meeting"]
 
     tl = q.what_was_i_doing(limit=10)
     assert tl["count"] >= 1
@@ -77,6 +80,58 @@ def test_from_config_mcp_detail(tmp_path: Path) -> None:
 def test_day_recap_missing(tmp_path: Path) -> None:
     q = SenseQuery(db_path=tmp_path / "no.db", offline_threshold_s=1, idle_threshold_s=1)
     assert q.day_recap()["error"] == "db_missing"
+
+
+def test_active_now_meeting_annotation_in_call(tmp_path: Path) -> None:
+    """ADR-004 live path: open Meet session appears under annotations.meeting."""
+    db = tmp_path / "s.db"
+    with Store(db) as store:
+        store.append(
+            "desktop_snapshot",
+            {
+                "windows": [
+                    {
+                        "app": "Google Chrome",
+                        "title": (
+                            "Meet – abc-defg-hij - Camera and microphone recording "
+                            "- Google Chrome"
+                        ),
+                        "active": True,
+                    },
+                    {"app": "ghostty", "title": "side", "active": False},
+                ],
+                "inventory": "full",
+                "source": "atspi",
+            },
+            ts="2026-08-03T15:00:00Z",
+        )
+        store.set_meta("last_tick", "2026-08-03T15:05:00Z")
+        store.set_meta("focus_backend", "atspi")
+    from datetime import UTC, datetime
+
+    from roxabi_sense.report.meeting_sessions import meeting_annotation_now
+
+    with Store(db) as store:
+        ev = store.events_for_day(
+            "2026-08-03",
+            kinds=("focus", "desktop_snapshot"),
+            limit=100,
+        )
+        ann = meeting_annotation_now(
+            ev,
+            now=datetime(2026, 8, 3, 15, 30, 0, tzinfo=UTC),
+            focus_backend="atspi",
+        )
+    assert ann["phase"] == "in_call"
+    assert ann["provider"] == "meet"
+    assert ann["call_id"] == "abc-defg-hij"
+    assert ann["fidelity"] == "full"
+
+    # Coarse strips title-derived fields when phase is set
+    redacted = _redact_obj(ann)
+    assert "label" not in redacted
+    assert "call_id" not in redacted
+    assert redacted["phase"] == "in_call"
 
 
 def test_day_recap_coarse_strips_titles_and_media(tmp_path: Path) -> None:

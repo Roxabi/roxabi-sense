@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
 from roxabi_sense.report.meeting import (
     MeetingHint,
     MeetingPhase,
     meeting_samples,
 )
+from roxabi_sense.report.meeting_fidelity import meeting_fidelity_from_events
+from roxabi_sense.report.segments import parse_ts
 from roxabi_sense.store import Event
 from roxabi_sense.util.time import to_z
 
@@ -109,6 +112,48 @@ def sessions_from_samples(
         close(horizon if horizon > cur_start else cur_start)
 
     return out
+
+
+def meeting_annotation_now(
+    events: list[Event],
+    *,
+    now: datetime | None = None,
+    focus_backend: str | None = None,
+) -> dict[str, Any]:
+    """
+    Open meeting surface at ``now`` (live path — same compiler as recap).
+
+    Returns annotations.meeting shape: phase None when not in a session.
+    Does not re-regex titles outside ``meeting_samples`` / ``meeting_sessions``.
+    """
+    horizon = now if now is not None else datetime.now(UTC)
+    if horizon.tzinfo is None:
+        horizon = horizon.replace(tzinfo=UTC)
+    fidelity, note = meeting_fidelity_from_events(
+        events,
+        focus_backend=focus_backend,
+    )
+    base: dict[str, Any] = {
+        "phase": None,
+        "fidelity": fidelity,
+        "fidelity_note": note,
+    }
+    sessions = meeting_sessions(events, horizon=horizon)
+    if not sessions:
+        return base
+    for s in reversed(sessions):
+        t0, t1 = parse_ts(s.start), parse_ts(s.end)
+        if t0 <= horizon <= t1:
+            return {
+                "phase": s.phase,
+                "provider": s.provider,
+                "start": s.start,
+                "label": s.label,
+                "call_id": s.call_id,
+                "fidelity": fidelity,
+                "fidelity_note": note,
+            }
+    return base
 
 
 def format_meeting_sessions(

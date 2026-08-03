@@ -151,17 +151,22 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _print_status(snap: StatusSnapshot, *, as_json: bool) -> int:
+    meeting = _status_meeting_annotation(snap)
     if not snap.db_exists:
         print(f"db: missing ({snap.db_path})")
         print("hint: run `sense once` or `sense daemon`")
         if as_json:
-            body = {"db": str(snap.db_path), "presence": snap.presence.to_dict()}
+            body = {
+                "db": str(snap.db_path),
+                "presence": snap.presence.to_dict(),
+                "annotations": {"meeting": meeting},
+            }
             print(json.dumps(body, indent=2))
         else:
             print("\n".join(format_presence_lines(snap.presence)))
         return 0
     if as_json:
-        # Legacy CLI keys only; full snapshot via StatusSnapshot.to_dict() for MCP
+        # Legacy CLI keys + meeting annotation (ADR-004 live path)
         body = {
             "db": str(snap.db_path),
             "events": snap.events,
@@ -169,6 +174,7 @@ def _print_status(snap: StatusSnapshot, *, as_json: bool) -> int:
             "daemon_started": snap.daemon_started,
             "machine": snap.machine,
             "presence": snap.presence.to_dict(),
+            "annotations": {"meeting": meeting},
         }
         print(json.dumps(body, ensure_ascii=False, indent=2))
         return 0
@@ -180,6 +186,18 @@ def _print_status(snap: StatusSnapshot, *, as_json: bool) -> int:
     print("--- presence ---")
     for line in format_presence_lines(snap.presence):
         print(line)
+    print("--- meeting ---")
+    phase = meeting.get("phase")
+    fid = meeting.get("fidelity") or "unknown"
+    if phase:
+        print(f"phase: {phase}  fidelity={fid}")
+        if meeting.get("provider"):
+            print(f"provider: {meeting['provider']}  since: {meeting.get('start') or '—'}")
+    else:
+        print(f"phase: none  fidelity={fid}")
+    note = meeting.get("fidelity_note")
+    if note:
+        print(f"note: {note}")
     last = snap.last_event
     if last:
         payload_preview = json.dumps(last.payload, ensure_ascii=False)[:120]
@@ -188,6 +206,31 @@ def _print_status(snap: StatusSnapshot, *, as_json: bool) -> int:
         preview = json.dumps(ev.payload, ensure_ascii=False)[:100]
         print(f"  {kind}: {ev.ts} {preview}")
     return 0
+
+
+def _status_meeting_annotation(snap: StatusSnapshot) -> dict:
+    """Live meeting annotation via report compiler (surfaces format only)."""
+    from roxabi_sense.report.meeting_sessions import meeting_annotation_now
+
+    if not snap.db_exists or not snap.db_path.is_file():
+        return {"phase": None, "fidelity": "unknown", "fidelity_note": "no store"}
+    try:
+        with Store(snap.db_path) as store:
+            ev = store.events_for_day(
+                None,
+                kinds=("focus", "desktop_snapshot"),
+                limit=20_000,
+            )
+            return meeting_annotation_now(
+                ev,
+                focus_backend=store.get_meta("focus_backend"),
+            )
+    except Exception:  # noqa: BLE001
+        return {
+            "phase": None,
+            "fidelity": "unknown",
+            "fidelity_note": "meeting annotation unavailable",
+        }
 
 
 def cmd_day(db_path: Path, *, day: str | None, as_json: bool, limit: int) -> int:

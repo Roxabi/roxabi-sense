@@ -72,7 +72,7 @@ Canonical greps:
 | Shared status / event summary | **done** (`report/status.py`, `report/event_summary.py`) |
 | CLI surface | **done** (`surfaces/cli.py`; root `cli.py` re-exports) |
 
-**Next product slices:** live meeting annotation on `active_now` (same ADR-004 compiler); NATS coarse publish; optional HTTP over `SenseQuery`; Cloudflare port of query contracts when data plane moves.
+**Next product slices:** wlr multi-window `get_desktop` (if fleet needs it); NATS coarse publish; optional HTTP over `SenseQuery`; Cloudflare port of query contracts when data plane moves.
 
 ## Stack & commands
 
