@@ -5,18 +5,18 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from roxabi_sense.store import Event
 from roxabi_sense.util.time import parse_ts, to_z
 from roxabi_sense.util.titles import normalize_title
 
-# Ignore micro-focus flickers when attributing dwell time.
-MIN_DWELL_S = 3.0
+if TYPE_CHECKING:
+    from roxabi_sense.report.meeting_sessions import MeetingSession
 
-# Degraded idle: silence ≥ this long → away from last activity (ADR-002).
-IDLE_GAP_S = 300.0
+MIN_DWELL_S = 3.0  # ignore micro-focus flickers
+IDLE_GAP_S = 300.0  # degraded idle silence threshold (ADR-002)
 _ACTIVITY_KINDS = frozenset({"focus", "desktop_snapshot"})
-
 _APP_ALIASES: dict[str, str] = {
     "unnamed": "ghostty",
     "xdg-desktop-portal-gtk": "dialog",
@@ -264,14 +264,14 @@ def top_titles(segments: list[FocusSegment], *, limit: int) -> list[tuple[str, f
 def hour_apps(
     segments: list[FocusSegment],
     away: list[AwaySegment] | None = None,
+    *,
+    meetings: list[MeetingSession] | None = None,
 ) -> list[tuple[str, list[tuple[str, float]]]]:
-    """Bucket focus (+ optional away) dwell into local-hour slices."""
+    """Bucket focus + optional away/meeting sessions into local-hour slices."""
     buckets: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     def _add(start_z: str, duration_s: float, label: str) -> None:
-        t0 = parse_ts(start_z).astimezone()
-        remaining = duration_s
-        cursor = t0
+        remaining, cursor = duration_s, parse_ts(start_z).astimezone()
         while remaining > 0.5:
             hour_end = cursor.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
             slice_s = min(remaining, (hour_end - cursor).total_seconds())
@@ -283,13 +283,13 @@ def hour_apps(
 
     for s in segments:
         _add(s.start, s.duration_s, s.app)
-    if away:
-        for a in away:
-            label = "meeting" if a.presence == "meeting" else "away"
-            _add(a.start, a.duration_s, label)
-
-    ordered: list[tuple[str, list[tuple[str, float]]]] = []
-    for hour in sorted(buckets.keys()):
-        apps = sorted(buckets[hour].items(), key=lambda kv: (-kv[1], kv[0]))
-        ordered.append((hour, apps))
-    return ordered
+    for m in meetings or []:
+        _add(m.start, m.duration_s, "meeting" if m.phase == "in_call" else "tab_open")
+    for a in away or []:
+        if meetings is not None and a.presence == "meeting":
+            continue
+        _add(a.start, a.duration_s, "meeting" if a.presence == "meeting" else "away")
+    return [
+        (h, sorted(buckets[h].items(), key=lambda kv: (-kv[1], kv[0])))
+        for h in sorted(buckets)
+    ]

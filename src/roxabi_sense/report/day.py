@@ -16,6 +16,11 @@ from roxabi_sense.report.enrich import (
     processes_seen,
 )
 from roxabi_sense.report.meeting import annotate_away_with_meetings
+from roxabi_sense.report.meeting_sessions import (
+    MeetingSession,
+    format_meeting_sessions,
+    meeting_sessions,
+)
 from roxabi_sense.report.segments import (
     IDLE_GAP_S,
     MIN_DWELL_S,
@@ -34,7 +39,6 @@ from roxabi_sense.store import Store
 
 _DAY_EVENT_LIMIT = 50_000
 
-
 @dataclass
 class DayRecap:
     day: str
@@ -48,10 +52,13 @@ class DayRecap:
     focus_segments: list[FocusSegment]
     away_segments: list[AwaySegment]
     away_total_s: float
+    # ADR-004: meeting_total_s = Σ in_call sessions only (not idle overlay sum).
     meeting_total_s: float
-    idle_mode: str  # "degraded-gap" | "none"
-    time_by_app: list[tuple[str, float]]  # legacy [(app, seconds)]
-    top_apps: list[AppDwell]  # ranked app + seconds/minutes/share (#47)
+    meeting_tab_open_s: float
+    meeting_sessions: list[MeetingSession]
+    idle_mode: str
+    time_by_app: list[tuple[str, float]]
+    top_apps: list[AppDwell]
     time_by_repo: list[tuple[str, float]]
     top_titles: list[tuple[str, float, str]]
     agent_sessions: list[AgentSessionRow]
@@ -59,11 +66,10 @@ class DayRecap:
     media: list[MediaTrack]
     idle_events: int
     hour_apps: list[tuple[str, list[tuple[str, float]]]]
-    session_shape: str | None  # deep|steady|fragmented|drifted|None (#48)
+    session_shape: str | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
 
 def compile_day_recap(
     store: Store,
@@ -82,9 +88,11 @@ def compile_day_recap(
 
     horizon = horizon_dt(end, now)
     gap_s = IDLE_GAP_S
+    # Sessions first (shared evidence); then idle overlay from in_call spans (ADR-004).
+    sessions = meeting_sessions(events, horizon=horizon)
     away = annotate_away_with_meetings(
         away_segments(events, horizon=horizon, gap_s=gap_s),
-        events,
+        sessions,
     )
     focus_ev = [e for e in events if e.kind == "focus"]
     segments = focus_segments(focus_ev, away, horizon=horizon)
@@ -96,19 +104,12 @@ def compile_day_recap(
         key=lambda s: _repo_label(s.cwd or ""),
     )
     modes = {a.mode for a in away}
-    if any(m.startswith("wayland") for m in modes):
-        idle_mode = "wayland-idle"
-    elif "logind" in modes:
-        idle_mode = "logind"
-    elif "degraded-gap" in modes:
-        idle_mode = "degraded-gap"
-    elif away:
-        idle_mode = "mixed"
-    else:
-        idle_mode = "none"
-
+    idle_mode = _idle_mode(modes, bool(away))
     pure_away = [a for a in away if a.presence != "meeting"]
-    meetings = [a for a in away if a.presence == "meeting"]
+    in_call = [m for m in sessions if m.phase == "in_call"]
+    tab_open = [m for m in sessions if m.phase == "tab_open"]
+    meeting_total_s = sum(m.duration_s for m in in_call)
+    meeting_tab_open_s = sum(m.duration_s for m in tab_open)
 
     return DayRecap(
         day=day_label,
@@ -122,7 +123,9 @@ def compile_day_recap(
         focus_segments=segments,
         away_segments=away,
         away_total_s=sum(a.duration_s for a in pure_away),
-        meeting_total_s=sum(a.duration_s for a in meetings),
+        meeting_total_s=meeting_total_s,
+        meeting_tab_open_s=meeting_tab_open_s,
+        meeting_sessions=sessions,
         idle_mode=idle_mode,
         time_by_app=time_by_app,
         top_apps=apps,
@@ -132,10 +135,9 @@ def compile_day_recap(
         processes_seen=processes_seen(events),
         media=media_tracks(events),
         idle_events=kind_counts.get("idle", 0),
-        hour_apps=hour_apps(segments, away),
+        hour_apps=hour_apps(segments, away, meetings=sessions),
         session_shape=session_shape(segments, away),
     )
-
 
 def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 24) -> str:
     """Human-readable multi-line recap."""
@@ -147,6 +149,8 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
     )
     if recap.meeting_total_s > 0:
         totals += f"   meeting={_fmt_dur(recap.meeting_total_s)}"
+    if recap.meeting_tab_open_s > 0:
+        totals += f"   tab_open={_fmt_dur(recap.meeting_tab_open_s)}"
     lines.append(f"sense recap  {recap.day}")
     lines.append(f"window: {span}   events={recap.event_count}   {totals}")
     if recap.session_shape:
@@ -154,6 +158,16 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
     if recap.kind_counts:
         kinds = "  ".join(f"{k}={v}" for k, v in list(recap.kind_counts.items())[:8])
         lines.append(f"kinds: {kinds}")
+
+    lines.extend(
+        format_meeting_sessions(
+            recap.meeting_sessions,
+            in_call_s=recap.meeting_total_s,
+            tab_open_s=recap.meeting_tab_open_s,
+            fmt_dur=_fmt_dur,
+            local_hm=_local_hm,
+        )
+    )
 
     lines.append("")
     n_away = sum(1 for a in recap.away_segments if a.presence != "meeting")
@@ -242,21 +256,27 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
 
     return "\n".join(lines)
 
+def _idle_mode(modes: set[str], has_away: bool) -> str:
+    if any(m.startswith("wayland") for m in modes):
+        return "wayland-idle"
+    if "logind" in modes:
+        return "logind"
+    if "degraded-gap" in modes:
+        return "degraded-gap"
+    return "mixed" if has_away else "none"
 
 def _repo_label(cwd: str) -> str:
     p = Path(cwd.rstrip("/"))
-    if p.name:
-        parts = p.parts
-        if "projects" in parts:
-            i = parts.index("projects")
-            tail = parts[i + 1 :]
-            if len(tail) >= 2:
-                return "/".join(tail[:2])
-            if tail:
-                return tail[0]
-        return p.name
-    return cwd
-
+    if not p.name:
+        return cwd
+    parts = p.parts
+    if "projects" in parts:
+        tail = parts[parts.index("projects") + 1 :]
+        if len(tail) >= 2:
+            return "/".join(tail[:2])
+        if tail:
+            return tail[0]
+    return p.name
 
 def _fmt_dur(seconds: float) -> str:
     s = int(round(seconds))
@@ -268,20 +288,13 @@ def _fmt_dur(seconds: float) -> str:
     h, m = divmod(m, 60)
     return f"{h}h{m:02d}m"
 
-
 def _fmt_span(first: str | None, last: str | None) -> str:
     if not first and not last:
         return "—"
-    a = _local_hm(first) if first else "?"
-    b = _local_hm(last) if last else "?"
-    return f"{a} → {b} local"
-
+    return f"{_local_hm(first) if first else '?'} → {_local_hm(last) if last else '?'} local"
 
 def _local_hm(ts: str) -> str:
     return parse_ts(ts).astimezone().strftime("%H:%M")
 
-
 def _pad(text: str, width: int) -> str:
-    if len(text) <= width:
-        return text.ljust(width)
-    return text[: width - 1] + "…"
+    return text.ljust(width) if len(text) <= width else text[: width - 1] + "…"
