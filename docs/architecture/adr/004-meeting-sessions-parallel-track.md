@@ -109,9 +109,23 @@ No second title-scan algorithm with different hysteresis.
 
 ### 6. Surfaces
 
-CLI, MCP, future HTTP/NATS **format** `report/` products only. Live “in call now?” = open session at `now` from the **same** session compiler — never re-regex titles in surfaces.
+CLI, MCP, future HTTP/NATS **format** `report/` products only. Live “in call now?” = open session at `now` from the **same** session compiler (`meeting_annotation_now`) — never re-regex titles in surfaces.
 
-Meeting is an **environment annotation**, not a fourth presence state. Prefer `annotations.meeting = in_call | tab_open | none` for live APIs later.
+Meeting is an **environment annotation**, not a fourth presence state:
+
+```json
+"annotations": {
+  "meeting": {
+    "phase": "in_call" | "tab_open" | null,
+    "provider": "meet" | …,
+    "start": "…Z",
+    "fidelity": "full" | "active_only" | …,
+    "fidelity_note": "…"
+  }
+}
+```
+
+Shipped on `active_now` (MCP/query) and `sense status` (text + JSON). Coarse MCP redacts `label` / `call_id`.
 
 ### 7. Providers
 

@@ -38,7 +38,7 @@ which sense && sense doctor
 | Tool | Use when |
 |------|----------|
 | `sense_status` | Daemon health, presence, last collect meta |
-| `active_now` | “What am I doing right now?” — presence + focus + open sessions |
+| `active_now` | “What am I doing right now?” — presence + focus + agents + `annotations.meeting` |
 | `what_was_i_doing` | Day timeline summaries (`day` = `YYYY-MM-DD`, optional `limit`) |
 | `agent_sessions` | Claude/Grok sessions for a day |
 | `day_recap` | Compiled recap JSON (apps, away, meetings, agents) |
