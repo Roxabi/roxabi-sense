@@ -84,24 +84,31 @@ def sessions_from_samples(
         if hint is None:
             close(ts)
             continue
-        if hint.phase != cur.phase or _session_key(hint) != _session_key(cur):
+        # Split only on phase/provider change, or known call_id conflict.
+        # None→id (or id→None) upgrades in place — ADR-004 / spec edge.
+        if hint.phase != cur.phase or hint.provider != cur.provider:
             close(ts)
             cur = hint
             cur_start = ts
             continue
-        if (not cur.call_id and hint.call_id) or (
-            hint.phase == "in_call" and len(hint.label) > len(cur.label)
+        if (
+            cur.call_id
+            and hint.call_id
+            and cur.call_id != hint.call_id
         ):
+            close(ts)
+            cur = hint
+            cur_start = ts
+            continue
+        if hint.call_id and not cur.call_id:
+            cur = hint
+        elif hint.phase == "in_call" and len(hint.label) > len(cur.label):
             cur = hint
 
     if cur is not None and cur_start is not None:
         close(horizon if horizon > cur_start else cur_start)
 
     return out
-
-
-def _session_key(h: MeetingHint) -> tuple[str, str | None]:
-    return (h.provider, h.call_id)
 
 
 def format_meeting_sessions(

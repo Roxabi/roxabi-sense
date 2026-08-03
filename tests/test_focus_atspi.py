@@ -222,6 +222,27 @@ def test_tick_desktop_writes_snapshot(tmp_path: Path, monkeypatch) -> None:
     store.close()
 
 
+def test_tick_desktop_skips_empty_inventory(tmp_path: Path, monkeypatch) -> None:
+    """ADR-004: soft-fail [] must not write desktop_snapshot (false meeting clear)."""
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.resolve_app_name",
+        lambda app, pid: app,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.find_agent_link",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.children_map",
+        lambda: {},
+    )
+    store = Store(tmp_path / "s.db")
+    c = FocusAtspiCollector(probe=lambda: [], sessions_loader=lambda: [])
+    assert c.tick_desktop(store) == 0
+    assert store.last_by_kind("desktop_snapshot") is None
+    store.close()
+
+
 def test_agent_attach_updates_focus_key(tmp_path: Path, monkeypatch) -> None:
     """Stable title but agent appears later → new focus row."""
     state: dict = {"agent": None}

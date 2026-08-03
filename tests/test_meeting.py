@@ -7,11 +7,16 @@ from pathlib import Path
 
 from roxabi_sense.report.day import compile_day_recap, format_day_recap
 from roxabi_sense.report.meeting import (
+    MeetingHint,
     annotate_away_with_meetings,
     match_meeting_title,
     meeting_hint_from_windows,
 )
-from roxabi_sense.report.meeting_sessions import MeetingSession, meeting_sessions
+from roxabi_sense.report.meeting_sessions import (
+    MeetingSession,
+    meeting_sessions,
+    sessions_from_samples,
+)
 from roxabi_sense.report.segments import AwaySegment
 from roxabi_sense.store import Event, Store
 
@@ -356,3 +361,90 @@ def test_meeting_sessions_survive_multitask_and_split_tab_open() -> None:
     assert in_call[0].duration_s <= 85 * 60
     assert tab
     assert tab[0].duration_s >= 8 * 60
+
+
+def test_desktop_without_meeting_ends_session() -> None:
+    """AC2: non-meeting desktop inventory hard-clears in_call (not horizon bleed)."""
+    events = [
+        Event(
+            id=1,
+            ts="2026-08-03T09:00:00Z",
+            kind="desktop_snapshot",
+            payload={
+                "windows": [
+                    {"app": "Google Chrome", "title": _MEET_IN_CALL, "active": True}
+                ]
+            },
+        ),
+        Event(
+            id=2,
+            ts="2026-08-03T09:10:00Z",
+            kind="desktop_snapshot",
+            payload={
+                "windows": [{"app": "ghostty", "title": "solo", "active": True}]
+            },
+        ),
+    ]
+    sessions = meeting_sessions(
+        events,
+        horizon=datetime(2026, 8, 3, 12, 0, 0, tzinfo=UTC),
+    )
+    assert len(sessions) == 1
+    assert sessions[0].phase == "in_call"
+    assert sessions[0].end == "2026-08-03T09:10:00Z"
+    assert sessions[0].duration_s == 600.0
+
+
+def test_call_id_upgrade_does_not_split() -> None:
+    """Spec edge: None→call_id upgrades; known different call_id splits."""
+    h0 = MeetingHint(
+        provider="meet",
+        label="Meet – join",
+        title="Meet – join - Camera and microphone recording",
+        phase="in_call",
+        call_id=None,
+    )
+    h1 = MeetingHint(
+        provider="meet",
+        label="meet.google.com/abc-defg-hij",
+        title="meet.google.com/abc-defg-hij",
+        phase="in_call",
+        call_id="abc-defg-hij",
+    )
+    h2 = MeetingHint(
+        provider="meet",
+        label="meet.google.com/xxx-yyyy-zzz",
+        title="meet.google.com/xxx-yyyy-zzz",
+        phase="in_call",
+        call_id="xxx-yyyy-zzz",
+    )
+    t0 = datetime(2026, 8, 3, 10, 0, 0, tzinfo=UTC)
+    t1 = datetime(2026, 8, 3, 10, 5, 0, tzinfo=UTC)
+    t2 = datetime(2026, 8, 3, 10, 10, 0, tzinfo=UTC)
+    horizon = datetime(2026, 8, 3, 10, 20, 0, tzinfo=UTC)
+    one = sessions_from_samples([(t0, h0), (t1, h1)], horizon=horizon)
+    assert len(one) == 1
+    assert one[0].call_id == "abc-defg-hij"
+    assert one[0].duration_s == 20 * 60
+    two = sessions_from_samples([(t0, h1), (t2, h2)], horizon=horizon)
+    assert len(two) == 2
+    assert two[0].call_id == "abc-defg-hij"
+    assert two[1].call_id == "xxx-yyyy-zzz"
+
+
+def test_in_call_window_wins_over_active_tab_open() -> None:
+    wins = [
+        {
+            "app": "Google Chrome",
+            "title": "Google Meet - Google Chrome",
+            "active": True,
+        },
+        {
+            "app": "Google Chrome",
+            "title": _MEET_IN_CALL,
+            "active": False,
+        },
+    ]
+    h = meeting_hint_from_windows(wins)
+    assert h is not None
+    assert h.phase == "in_call"

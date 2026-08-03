@@ -144,11 +144,14 @@ class FocusCollector:
 
         wrote = 0
         if mode in {"full", "desktop"}:
-            desktop_fp = _desktop_fingerprint(windows)
-            if desktop_fp != self._last_desktop_fp:
-                self._last_desktop_fp = desktop_fp
-                store.append(SNAPSHOT, _desktop_payload(windows, source=src))
-                wrote += 1
+            # ADR-004: probes soft-fail as [] — never emit empty inventory (false
+            # meeting clear). Hangup still clears via non-empty desktop without Meet.
+            if windows:
+                desktop_fp = _desktop_fingerprint(windows)
+                if desktop_fp != self._last_desktop_fp:
+                    self._last_desktop_fp = desktop_fp
+                    store.append(SNAPSHOT, _desktop_payload(windows, source=src))
+                    wrote += 1
         if mode == "desktop":
             wrote += self._maybe_write_focus(store, windows, source=src)
             return wrote

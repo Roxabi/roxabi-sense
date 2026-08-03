@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from roxabi_sense.report.segments import AwaySegment, parse_ts
 from roxabi_sense.store import Event
+from roxabi_sense.util.time import to_z
 
 # Operator + API vocabulary (one name — ADR-004).
 MeetingPhase = Literal["in_call", "tab_open"]
@@ -125,11 +126,11 @@ def match_meeting_title(title: str, app: str | None = None) -> MeetingHint | Non
 
 
 def meeting_hint_from_windows(windows: list[Any]) -> MeetingHint | None:
-    """Scan desktop windows; prefer active, then in_call over tab_open."""
+    """Scan desktop windows; any in_call wins over active tab_open (ADR-004)."""
     if not windows:
         return None
-    active_hint: MeetingHint | None = None
-    best_passive: MeetingHint | None = None
+    best_in_call: MeetingHint | None = None
+    best_tab: MeetingHint | None = None
     for w in windows:
         if not isinstance(w, dict):
             continue
@@ -139,17 +140,13 @@ def meeting_hint_from_windows(windows: list[Any]) -> MeetingHint | None:
         if hint is None:
             continue
         hint = replace(hint, active=bool(w.get("active")))
-        if w.get("active"):
-            if active_hint is None or (
-                hint.phase == "in_call" and active_hint.phase != "in_call"
-            ):
-                active_hint = hint
+        if hint.phase == "in_call":
+            if best_in_call is None or hint.active:
+                best_in_call = hint
             continue
-        if best_passive is None or (
-            hint.phase == "in_call" and best_passive.phase != "in_call"
-        ):
-            best_passive = hint
-    return active_hint or best_passive
+        if best_tab is None or hint.active:
+            best_tab = hint
+    return best_in_call or best_tab
 
 
 def meeting_samples(
@@ -183,10 +180,10 @@ def annotate_away_with_meetings(
     sessions: list[Any],
 ) -> list[AwaySegment]:
     """
-    Mark idle/away as presence=meeting when overlapping an **in_call** session.
+    Split idle/away on **in_call** overlap (ADR-004).
 
-    ``sessions`` must come from the same compile pass as ``meeting_total_s``
-    (ADR-004). Overlap annotation need not sum to ``meeting_total_s``.
+    Partial overlap → pure away + meeting + pure away slices so away_total_s
+    stays honest. Overlay duration need not equal ``meeting_total_s``.
     """
     if not away:
         return away
@@ -200,23 +197,64 @@ def annotate_away_with_meetings(
 
     out: list[AwaySegment] = []
     for seg in away:
-        t0, t1 = parse_ts(seg.start), parse_ts(seg.end)
-        hit = next(
-            (s for a0, a1, s in in_call if t0 < a1 and a0 < t1),
-            None,
-        )
-        if hit is None:
-            out.append(seg)
-            continue
-        out.append(
-            replace(
-                seg,
-                presence="meeting",
-                meeting_label=getattr(hit, "label", None),
-                meeting_provider=getattr(hit, "provider", None),
-            )
-        )
+        out.extend(_split_away_on_calls(seg, in_call))
     return out
+
+
+def _split_away_on_calls(
+    seg: AwaySegment,
+    in_call: list[tuple[datetime, datetime, Any]],
+) -> list[AwaySegment]:
+    t0, t1 = parse_ts(seg.start), parse_ts(seg.end)
+    # Collect overlaps clipped to the away segment, sorted.
+    clips: list[tuple[datetime, datetime, Any]] = []
+    for a0, a1, s in in_call:
+        c0, c1 = max(t0, a0), min(t1, a1)
+        if c0 < c1:
+            clips.append((c0, c1, s))
+    if not clips:
+        return [seg]
+    clips.sort(key=lambda x: x[0])
+    pieces: list[AwaySegment] = []
+    cursor = t0
+    for c0, c1, s in clips:
+        if cursor < c0:
+            pieces.append(_away_slice(seg, cursor, c0, meeting=False))
+        pieces.append(_away_slice(seg, c0, c1, meeting=True, session=s))
+        cursor = c1
+    if cursor < t1:
+        pieces.append(_away_slice(seg, cursor, t1, meeting=False))
+    return [p for p in pieces if p.duration_s > 0]
+
+
+def _away_slice(
+    seg: AwaySegment,
+    start: datetime,
+    end: datetime,
+    *,
+    meeting: bool,
+    session: Any | None = None,
+) -> AwaySegment:
+    dur = (end - start).total_seconds()
+    if meeting and session is not None:
+        return replace(
+            seg,
+            start=to_z(start),
+            end=to_z(end),
+            duration_s=dur,
+            presence="meeting",
+            meeting_label=getattr(session, "label", None),
+            meeting_provider=getattr(session, "provider", None),
+        )
+    return replace(
+        seg,
+        start=to_z(start),
+        end=to_z(end),
+        duration_s=dur,
+        presence="away",
+        meeting_label=None,
+        meeting_provider=None,
+    )
 
 
 def _extract_call_id(title: str) -> str | None:

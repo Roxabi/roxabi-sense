@@ -109,6 +109,10 @@ def test_day_recap_coarse_strips_titles_and_media(tmp_path: Path) -> None:
     assert "SECRET-SONG" not in blob
     assert body.get("top_titles") == []
     assert body.get("media") == []
+    # ADR-004 sessions: label/call_id are title-derived — coarse must strip
+    for sess in body.get("meeting_sessions") or []:
+        assert "label" not in sess
+        assert "call_id" not in sess
 
 
 def test_invalid_day_stable_error(tmp_path: Path) -> None:
