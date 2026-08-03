@@ -31,7 +31,9 @@ _COARSE_DROP_KEYS = frozenset(
         "album",
         "url",
         "uri",
-        "meeting_label",  # often derived from window titles
+        "meeting_label",  # away overlay — title-derived
+        "label",  # meeting_sessions[].label (window chrome)
+        "call_id",  # Meet room codes (ADR-004 / ADR-002 coarse)
     }
 )
 

@@ -65,14 +65,14 @@ Canonical greps:
 | Store (SQLite WAL) + CLI `status` / `day` / `recap` | **done** |
 | Collectors: agent sessions (+ opt-in Cursor), idle, focus probes, process, mpris, tmux | **done** |
 | Daemon + systemd `--user` install | **done** |
-| Report layer (presence, day recap, meeting annotate) | **done** |
+| Report layer (presence, day recap, meeting sessions ADR-004) | **done** |
 | MCP surface | **done** stdio (`sense mcp` · `uv sync --extra mcp`) |
 | Query API | **done** (`query.SenseQuery` — JSON for MCP / future HTTP / CF) |
 | NATS opt-in | **not wired** (optional dep empty) |
 | Shared status / event summary | **done** (`report/status.py`, `report/event_summary.py`) |
 | CLI surface | **done** (`surfaces/cli.py`; root `cli.py` re-exports) |
 
-**Next product slices:** NATS coarse publish; optional HTTP over `SenseQuery`; Cloudflare port of query contracts when data plane moves.
+**Next product slices:** live meeting annotation on `active_now` (same ADR-004 compiler); NATS coarse publish; optional HTTP over `SenseQuery`; Cloudflare port of query contracts when data plane moves.
 
 ## Stack & commands
 
@@ -141,6 +141,7 @@ deploy/         # systemd user unit
 | `docs/ARCHITECTURE.md` | Target shape + ecosystem |
 | `docs/architecture/adr/001-…` | Axis SSOT |
 | `docs/architecture/adr/002-presence-and-idle.md` | Idle authority |
+| `docs/architecture/adr/004-meeting-sessions-parallel-track.md` | Call sessions ∥ focus (`in_call` / `tab_open`) |
 | `docs/standards/backend-patterns.md` | Collectors / store / surfaces rules |
 | `docs/standards/frontend-patterns.md` | Explicit “no product FE” |
 | `.claude/stack.yml` | Commands, QG, release component |
