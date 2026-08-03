@@ -108,7 +108,7 @@ systemctl --user enable --now roxabi-sense.service
 # 3. smoke / DoD
 sense doctor                  # FAIL if offline / no DB / MCP missing
 sense status                  # last_tick should refresh while daemon is up
-sense recap
+sense recap                   # day summary; Meetings fidelity=full|active_only
 which sense                   # typically ~/.local/bin/sense
 
 # 5. optional NATS (when factory Sentinelle is ready)

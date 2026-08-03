@@ -1,6 +1,6 @@
 ---
 title: "Meeting sessions — parallel track"
-status: draft
+status: accepted
 date: 2026-08-03
 adr: docs/architecture/adr/004-meeting-sessions-parallel-track.md
 ---
@@ -42,6 +42,8 @@ See **ADR-004**. Parallel continuous sessions with phases `in_call` | `tab_open`
 | AC6 | Human recap shows one vocabulary: phases `in_call` / `tab_open` (no dual names like `ended_open` + `meet_window`) |
 | AC7 | Non-meeting media titles with “Audio playing” alone are **not** meetings |
 | AC8 | Surfaces do not reimplement title regex (CLI/MCP call `report/` only) |
+| AC9 | `desktop_snapshot.inventory` is `full` or `active_only`; partial inventory must not clear `in_call` |
+| AC10 | Recap exposes `meeting_fidelity` (+ note); doctor capability `meeting` warns when not `full` |
 
 ## Out of scope (this slice)
 
@@ -68,6 +70,8 @@ See **ADR-004**. Parallel continuous sessions with phases `in_call` | `tab_open`
 | AC3 | `test_meeting_total_contract` |
 | AC4–5 | annotate lobby + recap totals |
 | AC7 | classify negative “Audio playing” alone |
+| AC9 | `test_partial_inventory_does_not_clear_in_call` · full clear AC2 |
+| AC10 | `test_meeting_fidelity.py` · doctor capabilities |
 
 ## Ship note
 
