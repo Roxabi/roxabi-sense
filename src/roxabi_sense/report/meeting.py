@@ -155,15 +155,32 @@ def meeting_samples(
     """
     Single evidence stream (ADR-004 §5).
 
-    - desktop_snapshot: always (None = no meeting window → clear)
+    - desktop_snapshot: meeting chrome update, or clear if inventory is **full**
+      and no meeting window (partial/active_only does **not** clear — multitask)
     - focus: only when title matches a meeting surface (non-meeting focus omitted)
     """
+    from roxabi_sense.report.meeting_fidelity import (
+        inventory_for_windows,
+        is_clear_grade_inventory,
+    )
+
     samples: list[tuple[datetime, MeetingHint | None]] = []
     for e in events:
         if e.kind == "desktop_snapshot" and isinstance(e.payload, dict):
             wins = e.payload.get("windows")
-            if isinstance(wins, list):
-                samples.append((parse_ts(e.ts), meeting_hint_from_windows(wins)))
+            if not isinstance(wins, list):
+                continue
+            src = str(e.payload.get("source") or "")
+            inv = e.payload.get("inventory")
+            if not isinstance(inv, str):
+                inv = inventory_for_windows(wins, source=src)
+            hint = meeting_hint_from_windows(wins)
+            if hint is not None:
+                samples.append((parse_ts(e.ts), hint))
+                continue
+            if is_clear_grade_inventory(inv, n_windows=len(wins), source=src):
+                samples.append((parse_ts(e.ts), None))
+            # else: partial inventory, no meeting chrome → hold (omit sample)
         elif e.kind == "focus" and isinstance(e.payload, dict):
             h = match_meeting_title(
                 str(e.payload.get("title") or ""),

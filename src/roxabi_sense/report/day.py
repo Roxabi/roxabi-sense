@@ -16,6 +16,7 @@ from roxabi_sense.report.enrich import (
     processes_seen,
 )
 from roxabi_sense.report.meeting import annotate_away_with_meetings
+from roxabi_sense.report.meeting_fidelity import meeting_fidelity_from_events
 from roxabi_sense.report.meeting_sessions import (
     MeetingSession,
     format_meeting_sessions,
@@ -56,6 +57,8 @@ class DayRecap:
     meeting_total_s: float
     meeting_tab_open_s: float
     meeting_sessions: list[MeetingSession]
+    meeting_fidelity: str  # full | active_only | none | unknown (ADR-004)
+    meeting_fidelity_note: str
     idle_mode: str
     time_by_app: list[tuple[str, float]]
     top_apps: list[AppDwell]
@@ -110,6 +113,10 @@ def compile_day_recap(
     tab_open = [m for m in sessions if m.phase == "tab_open"]
     meeting_total_s = sum(m.duration_s for m in in_call)
     meeting_tab_open_s = sum(m.duration_s for m in tab_open)
+    fidelity, fidelity_note = meeting_fidelity_from_events(
+        events,
+        focus_backend=store.get_meta("focus_backend"),
+    )
 
     return DayRecap(
         day=day_label,
@@ -126,6 +133,8 @@ def compile_day_recap(
         meeting_total_s=meeting_total_s,
         meeting_tab_open_s=meeting_tab_open_s,
         meeting_sessions=sessions,
+        meeting_fidelity=fidelity,
+        meeting_fidelity_note=fidelity_note,
         idle_mode=idle_mode,
         time_by_app=time_by_app,
         top_apps=apps,
@@ -142,23 +151,22 @@ def compile_day_recap(
 def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 24) -> str:
     """Human-readable multi-line recap."""
     lines: list[str] = []
-    span = _fmt_span(recap.first_event, recap.last_event)
     tracked = sum(s for _, s in recap.time_by_app)
-    totals = (
-        f"focus_dwell={_fmt_dur(tracked)}   away={_fmt_dur(recap.away_total_s)}"
-    )
+    totals = f"focus_dwell={_fmt_dur(tracked)}   away={_fmt_dur(recap.away_total_s)}"
     if recap.meeting_total_s > 0:
         totals += f"   meeting={_fmt_dur(recap.meeting_total_s)}"
     if recap.meeting_tab_open_s > 0:
         totals += f"   tab_open={_fmt_dur(recap.meeting_tab_open_s)}"
-    lines.append(f"sense recap  {recap.day}")
-    lines.append(f"window: {span}   events={recap.event_count}   {totals}")
+    lines += [
+        f"sense recap  {recap.day}",
+        f"window: {_fmt_span(recap.first_event, recap.last_event)}   "
+        f"events={recap.event_count}   {totals}",
+    ]
     if recap.session_shape:
         lines.append(f"session_shape: {recap.session_shape}")
     if recap.kind_counts:
         kinds = "  ".join(f"{k}={v}" for k, v in list(recap.kind_counts.items())[:8])
         lines.append(f"kinds: {kinds}")
-
     lines.extend(
         format_meeting_sessions(
             recap.meeting_sessions,
@@ -166,25 +174,24 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
             tab_open_s=recap.meeting_tab_open_s,
             fmt_dur=_fmt_dur,
             local_hm=_local_hm,
+            fidelity=recap.meeting_fidelity,
+            fidelity_note=recap.meeting_fidelity_note,
         )
     )
-
-    lines.append("")
     n_away = sum(1 for a in recap.away_segments if a.presence != "meeting")
     n_meet = sum(1 for a in recap.away_segments if a.presence == "meeting")
-    lines.append(
+    lines += [
+        "",
         f"Idle gaps (mode={recap.idle_mode}, gap≥{_fmt_dur(IDLE_GAP_S)}, "
-        f"away={n_away} meeting={n_meet})"
-    )
+        f"away={n_away} meeting={n_meet})",
+    ]
     if recap.away_segments:
         for a in recap.away_segments[:20]:
             tag = a.presence if a.presence == "meeting" else "away"
             extra = ""
             if a.presence == "meeting" and a.meeting_label:
-                label = a.meeting_label
-                if len(label) > 48:
-                    label = label[:47] + "…"
-                extra = f" · {label}"
+                lab = a.meeting_label
+                extra = f" · {lab if len(lab) <= 48 else lab[:47] + '…'}"
             lines.append(
                 f"  {_local_hm(a.start)}–{_local_hm(a.end)}  {_fmt_dur(a.duration_s):>8}  "
                 f"[{a.mode}] {tag}{extra}"
@@ -193,15 +200,12 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
             lines.append(f"  … +{len(recap.away_segments) - 20} more")
     else:
         lines.append("  (none)")
-
-    lines.append("")
-    lines.append(f"Top apps (dwell ≥{MIN_DWELL_S:.0f}s, away cut out)")
+    lines += ["", f"Top apps (dwell ≥{MIN_DWELL_S:.0f}s, away cut out)"]
     if recap.top_apps:
         for row in recap.top_apps[:12]:
-            pct = row.share * 100
             lines.append(
                 f"  {_pad(row.app, 22)} {_fmt_dur(row.seconds):>8}"
-                f"  ({row.minutes:g}m)  {pct:5.1f}%"
+                f"  ({row.minutes:g}m)  {row.share * 100:5.1f}%"
             )
     elif recap.time_by_app:
         for app, secs in recap.time_by_app[:12]:
@@ -209,52 +213,40 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
             lines.append(f"  {_pad(app, 22)} {_fmt_dur(secs):>8}  {pct:5.1f}%")
     else:
         lines.append("  (no focus events)")
-
     if recap.time_by_repo:
-        lines.append("")
-        lines.append("Repos (from focus agent.cwd)")
+        lines += ["", "Repos (from focus agent.cwd)"]
         repo_total = sum(s for _, s in recap.time_by_repo)
         for repo, secs in recap.time_by_repo[:12]:
             pct = (secs / repo_total * 100) if repo_total else 0
             lines.append(f"  {_pad(repo, 28)} {_fmt_dur(secs):>8}  {pct:5.1f}%")
-
     if recap.top_titles:
-        lines.append("")
-        lines.append("Top windows")
+        lines += ["", "Top windows"]
         for title, secs, app in recap.top_titles[:max_titles]:
             t = title if len(title) <= 56 else title[:55] + "…"
             lines.append(f"  {_fmt_dur(secs):>8}  [{app}] {t}")
-
     if recap.agent_sessions:
-        lines.append("")
-        lines.append(f"Agent sessions seen open ({len(recap.agent_sessions)})")
+        lines += ["", f"Agent sessions seen open ({len(recap.agent_sessions)})"]
         for s in recap.agent_sessions:
-            cwd = s.cwd or "—"
             sid = (s.session_id or "")[:8]
             lines.append(
-                f"  {s.agent:7}  {sid:8}  {_local_hm(s.first_seen)}–{_local_hm(s.last_seen)}  {cwd}"
+                f"  {s.agent:7}  {sid:8}  {_local_hm(s.first_seen)}–{_local_hm(s.last_seen)}  "
+                f"{s.cwd or '—'}"
             )
-
     if recap.processes_seen:
-        lines.append("")
-        lines.append("Apps present: " + ", ".join(recap.processes_seen))
-
+        lines += ["", "Apps present: " + ", ".join(recap.processes_seen)]
     if recap.media:
-        lines.append("")
-        lines.append("Media")
+        lines += ["", "Media"]
         for m in recap.media[:8]:
-            art = m.artist or "?"
-            tit = m.title or "?"
-            lines.append(f"  {_local_hm(m.first_seen)}  {m.player}: {art} — {tit}")
-
+            lines.append(
+                f"  {_local_hm(m.first_seen)}  {m.player}: {m.artist or '?'} — {m.title or '?'}"
+            )
     if recap.hour_apps:
-        lines.append("")
-        lines.append("By hour (local, includes away/meeting)")
+        lines += ["", "By hour (local, includes away/meeting)"]
         for hour, apps in recap.hour_apps[:max_hours]:
             bits = " · ".join(f"{a} {_fmt_dur(s)}" for a, s in apps[:4])
             lines.append(f"  {hour}  {bits}")
-
     return "\n".join(lines)
+
 
 def _idle_mode(modes: set[str], has_away: bool) -> str:
     if any(m.startswith("wayland") for m in modes):
@@ -264,6 +256,7 @@ def _idle_mode(modes: set[str], has_away: bool) -> str:
     if "degraded-gap" in modes:
         return "degraded-gap"
     return "mixed" if has_away else "none"
+
 
 def _repo_label(cwd: str) -> str:
     p = Path(cwd.rstrip("/"))
@@ -278,6 +271,7 @@ def _repo_label(cwd: str) -> str:
             return tail[0]
     return p.name
 
+
 def _fmt_dur(seconds: float) -> str:
     s = int(round(seconds))
     if s < 60:
@@ -288,13 +282,16 @@ def _fmt_dur(seconds: float) -> str:
     h, m = divmod(m, 60)
     return f"{h}h{m:02d}m"
 
+
 def _fmt_span(first: str | None, last: str | None) -> str:
     if not first and not last:
         return "—"
     return f"{_local_hm(first) if first else '?'} → {_local_hm(last) if last else '?'} local"
 
+
 def _local_hm(ts: str) -> str:
     return parse_ts(ts).astimezone().strftime("%H:%M")
+
 
 def _pad(text: str, width: int) -> str:
     return text.ljust(width) if len(text) <= width else text[: width - 1] + "…"

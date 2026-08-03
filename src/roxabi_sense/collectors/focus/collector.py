@@ -222,6 +222,8 @@ def _desktop_fingerprint(windows: list[FocusWindow]) -> str:
 
 
 def _desktop_payload(windows: list[FocusWindow], *, source: str) -> dict[str, Any]:
+    # ADR-004: inventory class for meeting-session honesty (full vs active_only).
+    inv = "full" if len(windows) >= 2 else "active_only"
     payload: dict[str, Any] = {
         "windows": [
             {
@@ -236,6 +238,7 @@ def _desktop_payload(windows: list[FocusWindow], *, source: str) -> dict[str, An
             for w in windows
         ],
         "source": source,
+        "inventory": inv,
     }
     active = next((w for w in windows if w.active), None)
     if active is not None:

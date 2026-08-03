@@ -79,6 +79,11 @@ Meeting sessions **do not** replace focus. Multitask during a call appears on **
 4. **Phase change** (`in_call` ↔ `tab_open`) or `(provider, call_id)` change **splits** sessions.
 5. **End of `in_call`** = first sample that leaves strong in-call evidence (phase flip or clear) — **window-signal**, not calendar end. Optional grace hysteresis is a future config (default **0** until measured).
 6. Empty `windows: []` from a failed probe must **not** be emitted by collectors (prefer omit snapshot) — false clear risk.
+7. **Desktop inventory class** (honesty, post-ship amendment):
+   - Collectors tag `desktop_snapshot.inventory` = `full` (≥2 windows) | `active_only` (1 window).
+   - Typical wlr/x11 `get_desktop` is active-only; AT-SPI multi-window is `full`.
+   - **Hard clear** of an open session only on a **full** inventory sample with no meeting chrome. Partial/active_only no-meeting samples **hold** last meeting state (multitask on single-window backends).
+   - Day recap exposes `meeting_fidelity` + note; doctor capability `meeting` warns when not `full`.
 
 ### 4. Field contract (`DayRecap` / JSON)
 
@@ -87,6 +92,8 @@ Meeting sessions **do not** replace focus. Multitask during a call appears on **
 | `meeting_sessions` | Ordered list of continuous spans `{start,end,duration_s,provider,label,phase,call_id?}` |
 | `meeting_total_s` | **Σ duration of sessions with `phase == "in_call"` only** |
 | `meeting_tab_open_s` | **Σ duration of sessions with `phase == "tab_open"` only** |
+| `meeting_fidelity` | `full` \| `active_only` \| `none` \| `unknown` — trust class for totals |
+| `meeting_fidelity_note` | Short operator explanation (window-signal, not calendar hangup) |
 | away `presence == "meeting"` | Idle/away gap **overlapping** an `in_call` session (overlay for focus cut-out). **Must not** be assumed equal to `meeting_total_s` |
 
 Breaking note: prior builds used idle-reclassified sums for `meeting_total_s` and a looser “any Meet chrome” notion. Consumers must treat the new definition as authoritative.

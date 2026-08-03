@@ -53,9 +53,11 @@ def capabilities(cfg: SenseConfig) -> dict[str, Capability]:
         except Exception:  # noqa: BLE001
             meta = {}
 
+    fidelity = _meeting_fidelity_capability(cfg, meta)
     return {
         "focus": _focus_capability(cfg, meta),
         "idle": _idle_capability(cfg, meta),
+        "meeting": fidelity,
     }
 
 
@@ -66,11 +68,18 @@ def capability_checks(caps: dict[str, Capability]) -> list[CapCheck]:
             st: CheckStatus = "warn"
         else:
             st = "ok"
+        hint = None
+        if name == "meeting" and cap.status == "degraded":
+            hint = (
+                "meeting_total_s may under-count multitask; "
+                "AT-SPI multi-window desktop improves fidelity"
+            )
         out.append(
             CapCheck(
                 name=name,
                 status=st,
                 detail=f"{cap.status} backend={cap.backend} ({cap.reason})",
+                hint=hint,
             )
         )
     return out
@@ -108,6 +117,38 @@ def _focus_capability(cfg: SenseConfig, meta: dict[str, str]) -> Capability:
             backend="unknown",
             reason=str(exc)[:120],
         )
+
+
+def _meeting_fidelity_capability(cfg: SenseConfig, meta: dict[str, str]) -> Capability:
+    """Meeting call-duration honesty depends on desktop inventory class."""
+    from roxabi_sense.report.meeting_fidelity import meeting_fidelity_from_events
+    from roxabi_sense.store import Store
+
+    if not cfg.db_path.is_file():
+        return Capability(
+            status="unavailable",
+            backend="none",
+            reason="no store",
+        )
+    try:
+        with Store(cfg.db_path) as store:
+            # Recent day only — enough for operator honesty signal
+            events = store.events_for_day(None, kinds=("desktop_snapshot",), limit=500)
+            fid, note = meeting_fidelity_from_events(
+                events,
+                focus_backend=meta.get("focus_backend") or store.get_meta("focus_backend"),
+            )
+    except Exception as exc:  # noqa: BLE001
+        return Capability(
+            status="degraded",
+            backend="unknown",
+            reason=str(exc)[:120],
+        )
+    if fid == "full":
+        return Capability(status="available", backend=fid, reason=note[:160])
+    if fid == "active_only":
+        return Capability(status="degraded", backend=fid, reason=note[:160])
+    return Capability(status="degraded", backend=fid, reason=note[:160])
 
 
 def _idle_capability(cfg: SenseConfig, meta: dict[str, str]) -> Capability:

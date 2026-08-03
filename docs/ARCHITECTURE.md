@@ -44,7 +44,7 @@ Minimal shapes (illustrative):
 
 Daemon **liveness** is `meta.last_tick` (and related meta keys), **not** a periodic `kind=heartbeat` event firehose — see ADR-002.
 
-**Meeting sessions** (call vs leftover tab) are a **parallel report-layer track** over `desktop_snapshot` + meeting-titled `focus` — they do not replace focus dwell and are not a presence state. Phases `in_call` | `tab_open`; `meeting_total_s` sums `in_call` only. See [ADR-004](architecture/adr/004-meeting-sessions-parallel-track.md).
+**Meeting sessions** (call vs leftover tab) are a **parallel report-layer track** over `desktop_snapshot` + meeting-titled `focus` — they do not replace focus dwell and are not a presence state. Phases `in_call` | `tab_open`; `meeting_total_s` sums `in_call` only. Honesty is **conditional** on desktop inventory class (`full` multi-window vs `active_only` single-window backends): see [ADR-004](architecture/adr/004-meeting-sessions-parallel-track.md) §3.7 and `meeting_fidelity` on recap / doctor.
 
 Store path: `~/.local/share/roxabi-sense/sense.db` (override via env / config).
 

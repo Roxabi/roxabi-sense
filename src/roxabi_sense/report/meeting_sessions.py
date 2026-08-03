@@ -119,9 +119,11 @@ def format_meeting_sessions(
     fmt_dur,
     local_hm,
     limit: int = 12,
+    fidelity: str | None = None,
+    fidelity_note: str | None = None,
 ) -> list[str]:
     """Human-readable meeting block — same phase names as JSON (ADR-004)."""
-    if not sessions:
+    if not sessions and not fidelity:
         return []
     head = f"Meetings (parallel to focus; in_call={fmt_dur(in_call_s)}"
     if tab_open_s > 0:
@@ -137,4 +139,7 @@ def format_meeting_sessions(
         )
     if len(sessions) > limit:
         lines.append(f"  … +{len(sessions) - limit} more")
+    if fidelity and (sessions or fidelity != "unknown"):
+        note = fidelity_note or ""
+        lines.append(f"  fidelity={fidelity}  {note}".rstrip())
     return lines

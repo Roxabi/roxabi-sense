@@ -159,7 +159,9 @@ def test_recap_meeting_vs_away_totals(tmp_path: Path) -> None:
                         "active": False,
                     },
                     {"app": "ghostty", "title": "work - grok", "active": True},
-                ]
+                ],
+                "inventory": "full",
+                "source": "atspi",
             },
             ts="2026-07-31T08:55:00Z",
         )
@@ -200,7 +202,14 @@ def test_recap_meeting_vs_away_totals(tmp_path: Path) -> None:
         )
         store.append(
             "desktop_snapshot",
-            {"windows": [{"app": "ghostty", "title": "solo", "active": True}]},
+            {
+                "windows": [
+                    {"app": "ghostty", "title": "solo", "active": True},
+                    {"app": "slack", "title": "idle", "active": False},
+                ],
+                "inventory": "full",
+                "source": "atspi",
+            },
             ts="2026-07-31T10:50:00Z",
         )
         recap = compile_day_recap(
@@ -232,8 +241,11 @@ def test_meeting_total_contract(tmp_path: Path) -> None:
             "desktop_snapshot",
             {
                 "windows": [
-                    {"app": "Google Chrome", "title": _MEET_IN_CALL, "active": True}
-                ]
+                    {"app": "Google Chrome", "title": _MEET_IN_CALL, "active": True},
+                    {"app": "ghostty", "title": "side", "active": False},
+                ],
+                "inventory": "full",
+                "source": "atspi",
             },
             ts="2026-08-03T09:00:00Z",
         )
@@ -245,14 +257,24 @@ def test_meeting_total_contract(tmp_path: Path) -> None:
                         "app": "Google Chrome",
                         "title": "meet.google.com/landing - Google Chrome",
                         "active": True,
-                    }
-                ]
+                    },
+                    {"app": "ghostty", "title": "side", "active": False},
+                ],
+                "inventory": "full",
+                "source": "atspi",
             },
             ts="2026-08-03T10:00:00Z",
         )
         store.append(
             "desktop_snapshot",
-            {"windows": [{"app": "ghostty", "title": "done", "active": True}]},
+            {
+                "windows": [
+                    {"app": "ghostty", "title": "done", "active": True},
+                    {"app": "slack", "title": "x", "active": False},
+                ],
+                "inventory": "full",
+                "source": "atspi",
+            },
             ts="2026-08-03T10:10:00Z",
         )
         recap = compile_day_recap(
@@ -269,7 +291,9 @@ def test_meeting_total_contract(tmp_path: Path) -> None:
     assert recap.meeting_tab_open_s == tab_sum
     assert recap.meeting_total_s >= 50 * 60
     assert recap.meeting_tab_open_s >= 5 * 60
+    assert recap.meeting_fidelity == "full"
     assert "tab_open" in format_day_recap(recap)
+    assert "fidelity=full" in format_day_recap(recap)
 
 
 def test_meeting_sessions_survive_multitask_and_split_tab_open() -> None:
@@ -364,7 +388,7 @@ def test_meeting_sessions_survive_multitask_and_split_tab_open() -> None:
 
 
 def test_desktop_without_meeting_ends_session() -> None:
-    """AC2: non-meeting desktop inventory hard-clears in_call (not horizon bleed)."""
+    """AC2: full inventory without meeting chrome hard-clears in_call."""
     events = [
         Event(
             id=1,
@@ -372,8 +396,11 @@ def test_desktop_without_meeting_ends_session() -> None:
             kind="desktop_snapshot",
             payload={
                 "windows": [
-                    {"app": "Google Chrome", "title": _MEET_IN_CALL, "active": True}
-                ]
+                    {"app": "Google Chrome", "title": _MEET_IN_CALL, "active": True},
+                    {"app": "ghostty", "title": "side", "active": False},
+                ],
+                "inventory": "full",
+                "source": "atspi",
             },
         ),
         Event(
@@ -381,7 +408,12 @@ def test_desktop_without_meeting_ends_session() -> None:
             ts="2026-08-03T09:10:00Z",
             kind="desktop_snapshot",
             payload={
-                "windows": [{"app": "ghostty", "title": "solo", "active": True}]
+                "windows": [
+                    {"app": "ghostty", "title": "solo", "active": True},
+                    {"app": "slack", "title": "x", "active": False},
+                ],
+                "inventory": "full",
+                "source": "atspi",
             },
         ),
     ]
@@ -393,6 +425,52 @@ def test_desktop_without_meeting_ends_session() -> None:
     assert sessions[0].phase == "in_call"
     assert sessions[0].end == "2026-08-03T09:10:00Z"
     assert sessions[0].duration_s == 600.0
+
+
+def test_partial_inventory_does_not_clear_in_call() -> None:
+    """active_only single-window desktop (wlr multitask) must not end the call."""
+    events = [
+        Event(
+            id=1,
+            ts="2026-08-03T09:00:00Z",
+            kind="focus",
+            payload={
+                "app": "Google Chrome",
+                "title": "meet.google.com/qwb-fxnf-dje - Google Chrome",
+            },
+        ),
+        Event(
+            id=2,
+            ts="2026-08-03T09:01:00Z",
+            kind="desktop_snapshot",
+            payload={
+                "windows": [
+                    {"app": "Google Chrome", "title": _MEET_IN_CALL, "active": True}
+                ],
+                "inventory": "active_only",
+                "source": "wlr",
+            },
+        ),
+        # Multitask: only Discord visible (partial inventory)
+        Event(
+            id=3,
+            ts="2026-08-03T09:20:00Z",
+            kind="desktop_snapshot",
+            payload={
+                "windows": [{"app": "Discord", "title": "#q", "active": True}],
+                "inventory": "active_only",
+                "source": "wlr",
+            },
+        ),
+    ]
+    sessions = meeting_sessions(
+        events,
+        horizon=datetime(2026, 8, 3, 10, 0, 0, tzinfo=UTC),
+    )
+    assert len(sessions) == 1
+    assert sessions[0].phase == "in_call"
+    assert sessions[0].call_id == "qwb-fxnf-dje"
+    assert sessions[0].duration_s >= 50 * 60
 
 
 def test_call_id_upgrade_does_not_split() -> None:
