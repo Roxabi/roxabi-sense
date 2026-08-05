@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
 from roxabi_sense.report.enrich import (
     AgentSessionRow,
     MediaTrack,
@@ -23,23 +24,19 @@ from roxabi_sense.report.meeting_sessions import (
     meeting_sessions,
 )
 from roxabi_sense.report.segments import (
-    IDLE_GAP_S,
     MIN_DWELL_S,
-    AwaySegment,
     FocusSegment,
-    away_segments,
     focus_segments,
     horizon_dt,
     hour_apps,
-    parse_ts,
     sum_by,
     top_titles,
 )
 from roxabi_sense.report.top_apps import AppDwell, session_shape, top_apps
 from roxabi_sense.store import Store
+from roxabi_sense.util.time import parse_ts
 
 _DAY_EVENT_LIMIT = 50_000
-
 @dataclass
 class DayRecap:
     day: str
@@ -90,11 +87,17 @@ def compile_day_recap(
     last_ts = events[-1].ts if events else None
 
     horizon = horizon_dt(end, now)
-    gap_s = IDLE_GAP_S
-    # Sessions first (shared evidence); then idle overlay from in_call spans (ADR-004).
+    # Carry-in prior-day idle so overnight leave-open does not soak last app (ADR-002).
+    prior_idle = store.last_by_kind_before("idle", start)
     sessions = meeting_sessions(events, horizon=horizon)
     away = annotate_away_with_meetings(
-        away_segments(events, horizon=horizon, gap_s=gap_s),
+        away_segments(
+            events,
+            horizon=horizon,
+            gap_s=IDLE_GAP_S,
+            window_start=parse_ts(start),
+            prior_idle=prior_idle,
+        ),
         sessions,
     )
     focus_ev = [e for e in events if e.kind == "focus"]

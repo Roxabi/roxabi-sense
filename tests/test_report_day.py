@@ -181,6 +181,132 @@ def test_protocol_idle_precedence_over_gap(tmp_path: Path) -> None:
     assert apps.get("Google Chrome", 0) < 60 * 60  # not full multi-hour dwell
 
 
+def test_prior_day_idle_cuts_overnight_focus(tmp_path: Path) -> None:
+    """Idle opened before local midnight must not attribute night dwell to last app.
+
+    Regression: protocol idle=True on D-1 + idle=False on D leaves D with only
+    later idle pairs → exclusive protocol path skipped the overnight hole and
+    WhatsApp (etc.) absorbed 00:00→wake as focus.
+    """
+    db = tmp_path / "sense.db"
+    with Store(db) as store:
+        start, _end = store.day_bounds("2026-07-31")
+        # Last app of the previous evening (still inside D once day rolls).
+        store.append(
+            "focus",
+            {"app": "whatsapp-desktop-linux", "title": "WhatsApp"},
+            ts=start,  # local midnight of D
+        )
+        # Idle opened before D (carry-in); resume mid-morning on D.
+        store.append(
+            "idle",
+            {
+                "idle": True,
+                "source": "wayland-idle",
+                "threshold_s": 300,
+                "idle_since": "2026-07-30T21:12:00Z",
+            },
+            ts="2026-07-30T21:17:00Z",
+        )
+        store.append(
+            "idle",
+            {"idle": False, "source": "wayland-idle", "threshold_s": 300},
+            ts="2026-07-31T06:18:00Z",
+        )
+        store.append(
+            "focus",
+            {"app": "ghostty", "title": "work - grok"},
+            ts="2026-07-31T06:18:01Z",
+        )
+        # Later idle pair so protocol path is non-empty even without carry-in
+        # (this is what used to mask degraded-gap for the night).
+        store.append(
+            "idle",
+            {
+                "idle": True,
+                "source": "wayland-idle",
+                "threshold_s": 300,
+                "idle_since": "2026-07-31T12:00:00Z",
+            },
+            ts="2026-07-31T12:05:00Z",
+        )
+        store.append(
+            "idle",
+            {"idle": False, "source": "wayland-idle", "threshold_s": 300},
+            ts="2026-07-31T12:20:00Z",
+        )
+        recap = compile_day_recap(
+            store,
+            "2026-07-31",
+            now=datetime(2026, 7, 31, 14, 0, 0, tzinfo=UTC),
+        )
+    assert recap.idle_mode == "wayland-idle"
+    # Overnight (midnight → 06:18) must be away, not WhatsApp.
+    apps = dict(recap.time_by_app)
+    assert apps.get("whatsapp-desktop-linux", 0) < 60
+    assert recap.away_total_s >= 5 * 3600
+    night_aways = [
+        a
+        for a in recap.away_segments
+        if a.start <= start and a.end >= "2026-07-31T06:18:00Z"
+    ]
+    assert night_aways, "expected carry-in away covering overnight → wake"
+
+
+def test_retrue_while_open_keeps_earliest_idle(tmp_path: Path) -> None:
+    """Watch respawn re-emit idle=True must not clobber overnight open_start."""
+    db = tmp_path / "sense.db"
+    with Store(db) as store:
+        start, _end = store.day_bounds("2026-07-31")
+        store.append(
+            "focus",
+            {"app": "whatsapp-desktop-linux", "title": "WhatsApp"},
+            ts=start,
+        )
+        store.append(
+            "idle",
+            {
+                "idle": True,
+                "source": "wayland-idle",
+                "threshold_s": 300,
+                "idle_since": "2026-07-30T21:12:00Z",
+            },
+            ts="2026-07-30T21:17:00Z",
+        )
+        # Re-True mid-night (respawn) without intermediate False.
+        store.append(
+            "idle",
+            {
+                "idle": True,
+                "source": "wayland-idle",
+                "threshold_s": 300,
+                "idle_since": "2026-07-31T03:00:00Z",
+            },
+            ts="2026-07-31T03:05:00Z",
+        )
+        store.append(
+            "idle",
+            {"idle": False, "source": "wayland-idle", "threshold_s": 300},
+            ts="2026-07-31T06:18:00Z",
+        )
+        store.append(
+            "focus",
+            {"app": "ghostty", "title": "work - grok"},
+            ts="2026-07-31T06:18:01Z",
+        )
+        recap = compile_day_recap(
+            store,
+            "2026-07-31",
+            now=datetime(2026, 7, 31, 14, 0, 0, tzinfo=UTC),
+        )
+    apps = dict(recap.time_by_app)
+    assert apps.get("whatsapp-desktop-linux", 0) < 60
+    assert recap.away_total_s >= 5 * 3600
+    assert any(
+        a.start <= start and a.end >= "2026-07-31T06:18:00Z" for a in recap.away_segments
+    )
+
+
 def test_degraded_away_cuts_focus_attribution(tmp_path: Path) -> None:
     """Gap ≥5 min after last activity → away from last activity, not last app."""
     db = tmp_path / "sense.db"
