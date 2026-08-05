@@ -105,8 +105,12 @@ def _protocol_away(
     out: list[AwaySegment] = []
     for e in idle_ev:
         if e.payload.get("idle") is True:
-            open_start = _idle_open_start(e.payload, e.ts, gap_s)
-            open_mode = _idle_mode_of(e.payload)
+            # Already open (carry-in or prior True): keep earliest open_start.
+            # Watch respawn / logind handoff can re-emit True without False;
+            # clobbering would drop midnight→re-True and soak last app again.
+            if open_start is None:
+                open_start = _idle_open_start(e.payload, e.ts, gap_s)
+                open_mode = _idle_mode_of(e.payload)
         elif e.payload.get("idle") is False and open_start is not None:
             seg = _emit(open_start, parse_ts(e.ts), open_mode, window_start=window_start)
             if seg is not None:
