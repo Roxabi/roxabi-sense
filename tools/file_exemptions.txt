@@ -1,2 +1,4 @@
 # Standalone system-python AT-SPI worker (gi); self-contained by design.
 src/roxabi_sense/atspi/agent_worker.py # 510 lines
+# Multi-strategy focus→session join (process tree + pane_title + path); split if it grows further.
+src/roxabi_sense/util/agent_link.py # 380 lines

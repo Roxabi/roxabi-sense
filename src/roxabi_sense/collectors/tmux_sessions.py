@@ -24,7 +24,24 @@ class TmuxSessionsCollector:
         if not self._tmux:
             return 0
         panes = self._list_panes()
-        fingerprint = json.dumps(panes, sort_keys=True)
+        # Fingerprint structure only — pane_title churns with Thinking/Running.
+        fingerprint = json.dumps(
+            [
+                {
+                    k: p.get(k)
+                    for k in (
+                        "session",
+                        "window",
+                        "window_name",
+                        "command",
+                        "path",
+                        "attached",
+                    )
+                }
+                for p in panes
+            ],
+            sort_keys=True,
+        )
         if fingerprint == self._last:
             return 0
         self._last = fingerprint
@@ -35,7 +52,8 @@ class TmuxSessionsCollector:
         assert self._tmux
         fmt = (
             "#{session_name}\t#{window_index}\t#{window_name}\t"
-            "#{pane_current_command}\t#{pane_current_path}\t#{session_attached}"
+            "#{pane_current_command}\t#{pane_current_path}\t#{session_attached}\t"
+            "#{pane_title}"
         )
         try:
             proc = subprocess.run(
@@ -55,6 +73,9 @@ class TmuxSessionsCollector:
             if len(parts) < 6:
                 continue
             session, win_i, win_name, cmd, path, attached = parts[:6]
+            pane_title = parts[6] if len(parts) > 6 else ""
+            if len(parts) > 7:
+                pane_title = "\t".join(parts[6:])
             panes.append(
                 {
                     "session": session,
@@ -63,6 +84,7 @@ class TmuxSessionsCollector:
                     "command": cmd,
                     "path": path,
                     "attached": attached == "1",
+                    "pane_title": pane_title,
                 }
             )
         return panes
