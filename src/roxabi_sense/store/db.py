@@ -199,6 +199,18 @@ class Store:
         ).fetchone()
         return None if row is None else self._row(row)
 
+    def last_by_kind_before(self, kind: str, before_ts: str) -> Event | None:
+        """Latest event of ``kind`` with ``ts < before_ts`` (day-boundary carry-in)."""
+        row = self._conn.execute(
+            """
+            SELECT id, ts, kind, payload FROM events
+            WHERE kind = ? AND ts < ?
+            ORDER BY ts DESC, id DESC LIMIT 1
+            """,
+            (kind, before_ts),
+        ).fetchone()
+        return None if row is None else self._row(row)
+
     def latest_by_kinds(self, kinds: tuple[str, ...] = STATUS_KINDS) -> dict[str, Event]:
         out: dict[str, Event] = {}
         for kind in kinds:

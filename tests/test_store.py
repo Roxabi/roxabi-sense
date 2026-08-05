@@ -81,6 +81,18 @@ def test_meta_and_empty(tmp_path: Path) -> None:
     store.close()
 
 
+def test_last_by_kind_before(tmp_path: Path) -> None:
+    store = Store(tmp_path / "s.db")
+    store.append("idle", {"idle": True, "source": "wayland-idle"}, ts="2026-07-30T21:00:00Z")
+    store.append("idle", {"idle": False, "source": "wayland-idle"}, ts="2026-07-31T06:00:00Z")
+    prior = store.last_by_kind_before("idle", "2026-07-31T00:00:00Z")
+    assert prior is not None
+    assert prior.payload["idle"] is True
+    assert prior.ts.startswith("2026-07-30")
+    assert store.last_by_kind_before("idle", "2026-07-30T00:00:00Z") is None
+    store.close()
+
+
 def test_corrupt_payload_does_not_crash(tmp_path: Path) -> None:
     import sqlite3
 

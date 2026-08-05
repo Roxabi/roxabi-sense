@@ -1,4 +1,4 @@
-"""Focus dwell + degraded away inference from activity gaps."""
+"""Focus dwell segments; away gaps live in ``report.away`` (ADR-002)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
 from roxabi_sense.store import Event
 from roxabi_sense.util.time import parse_ts, to_z
 from roxabi_sense.util.titles import normalize_title
@@ -14,9 +15,22 @@ from roxabi_sense.util.titles import normalize_title
 if TYPE_CHECKING:
     from roxabi_sense.report.meeting_sessions import MeetingSession
 
+# Re-export for existing importers (meeting, top_apps, tests).
+__all__ = [
+    "AwaySegment",
+    "FocusSegment",
+    "IDLE_GAP_S",
+    "MIN_DWELL_S",
+    "away_segments",
+    "focus_segments",
+    "horizon_dt",
+    "hour_apps",
+    "norm_app",
+    "sum_by",
+    "top_titles",
+]
+
 MIN_DWELL_S = 3.0  # ignore micro-focus flickers
-IDLE_GAP_S = 300.0  # degraded idle silence threshold (ADR-002)
-_ACTIVITY_KINDS = frozenset({"focus", "desktop_snapshot"})
 _APP_ALIASES: dict[str, str] = {
     "unnamed": "ghostty",
     "xdg-desktop-portal-gtk": "dialog",
@@ -34,19 +48,6 @@ class FocusSegment:
     agent: str | None = None
 
 
-@dataclass(frozen=True)
-class AwaySegment:
-    """Inferred absence or meeting overlay on input-idle / activity gaps."""
-
-    start: str
-    end: str
-    duration_s: float
-    mode: str = "degraded-gap"  # wayland-idle | logind | degraded-gap
-    presence: str = "away"  # away | meeting (compile-time annotation)
-    meeting_label: str | None = None
-    meeting_provider: str | None = None  # meet | zoom | teams
-
-
 def norm_app(raw: str | None) -> str:
     app = (raw or "?").strip() or "?"
     return _APP_ALIASES.get(app.lower(), app)
@@ -58,119 +59,6 @@ def horizon_dt(day_end_z: str, now: datetime | None) -> datetime:
     if n.tzinfo is None:
         n = n.replace(tzinfo=UTC)
     return min(n, end)
-
-
-def away_segments(
-    events: list[Event],
-    *,
-    horizon: datetime,
-    gap_s: float = IDLE_GAP_S,
-) -> list[AwaySegment]:
-    """
-    Prefer protocol idle transitions (ADR-002); else degraded activity gaps.
-
-    Protocol: kind=idle with idle true/false and source (wayland-idle|logind).
-    Degraded: silence ≥ gap_s on focus/desktop_snapshot from last activity.
-    """
-    protocol = _protocol_away_segments(events, horizon=horizon, gap_s=gap_s)
-    if protocol:
-        return protocol
-    return _degraded_gap_away_segments(events, horizon=horizon, gap_s=gap_s)
-
-
-def _protocol_away_segments(
-    events: list[Event],
-    *,
-    horizon: datetime,
-    gap_s: float,
-) -> list[AwaySegment]:
-    idle_ev = [e for e in events if e.kind == "idle" and isinstance(e.payload.get("idle"), bool)]
-    if not idle_ev:
-        return []
-    idle_ev.sort(key=lambda e: (e.ts, e.id))
-    out: list[AwaySegment] = []
-    open_start: datetime | None = None
-    open_mode = "wayland-idle"
-    for e in idle_ev:
-        src = str(e.payload.get("source") or "idle")
-        mode = src if src in {"wayland-idle", "logind"} else src
-        if e.payload.get("idle") is True:
-            since_raw = e.payload.get("idle_since")
-            if since_raw:
-                try:
-                    open_start = parse_ts(str(since_raw))
-                except ValueError:
-                    open_start = parse_ts(e.ts) - timedelta(seconds=gap_s)
-            else:
-                open_start = parse_ts(e.ts) - timedelta(seconds=gap_s)
-            open_mode = mode
-        elif e.payload.get("idle") is False and open_start is not None:
-            end = parse_ts(e.ts)
-            if end > open_start:
-                out.append(
-                    AwaySegment(
-                        start=to_z(open_start),
-                        end=to_z(end),
-                        duration_s=(end - open_start).total_seconds(),
-                        mode=open_mode,
-                    )
-                )
-            open_start = None
-    if open_start is not None and horizon > open_start:
-        out.append(
-            AwaySegment(
-                start=to_z(open_start),
-                end=to_z(horizon),
-                duration_s=(horizon - open_start).total_seconds(),
-                mode=open_mode,
-            )
-        )
-    return out
-
-
-def _degraded_gap_away_segments(
-    events: list[Event],
-    *,
-    horizon: datetime,
-    gap_s: float,
-) -> list[AwaySegment]:
-    """Away when activity gap ≥ gap_s; idle starts at last activity."""
-    times: list[datetime] = []
-    for e in events:
-        if e.kind not in _ACTIVITY_KINDS:
-            continue
-        times.append(parse_ts(e.ts))
-    if not times:
-        return []
-    times.sort()
-    uniq: list[datetime] = [times[0]]
-    for t in times[1:]:
-        if (t - uniq[-1]).total_seconds() >= 0.5:
-            uniq.append(t)
-
-    out: list[AwaySegment] = []
-    for i in range(len(uniq) - 1):
-        gap = (uniq[i + 1] - uniq[i]).total_seconds()
-        if gap >= gap_s:
-            out.append(
-                AwaySegment(
-                    start=to_z(uniq[i]),
-                    end=to_z(uniq[i + 1]),
-                    duration_s=gap,
-                    mode="degraded-gap",
-                )
-            )
-    tail = (horizon - uniq[-1]).total_seconds()
-    if tail >= gap_s:
-        out.append(
-            AwaySegment(
-                start=to_z(uniq[-1]),
-                end=to_z(horizon),
-                duration_s=tail,
-                mode="degraded-gap",
-            )
-        )
-    return out
 
 
 def focus_segments(
