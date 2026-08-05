@@ -308,16 +308,201 @@ def test_score_pane_title_basics() -> None:
         "Dev 61 Session Title - grok",
         "Dev 61 Session Title - grok",
     ) == 100
+    # Thinking strip → same core → exact 100 (not merely prefix)
     assert (
         al.score_pane_title(
             "tu peux me faire un petit recap de ce qu… - grok",
             "Thinking - tu peux me faire un petit recap de ce qu… - grok",
         )
-        >= 90
+        == 100
     )
     assert (
         al.score_pane_title("Hermes Slack kit - grok", "Other work entirely - grok") == 0
     )
+    # Prefix truncation tier
+    assert (
+        al.score_pane_title(
+            "Fix the login bug - grok",
+            "Fix the login bug in production auth - grok",
+        )
+        == 90
+    )
+    # Parent core as substring of compound focus title → 80 (weak; not early-return)
+    assert (
+        al.score_pane_title(
+            "Running: Ask: something - Parent Session Title - grok",
+            "Parent Session Title - grok",
+        )
+        == 80
+    )
+    # Unrelated cores → 0
+    assert (
+        al.score_pane_title(
+            "WIP authentication middleware work - grok",
+            "Port auth to v2 API only - grok",
+        )
+        == 0
+    )
+
+
+def test_find_agent_link_exact_wins_over_prefix_pane(monkeypatch) -> None:
+    """Exact title must win even when another pane is a longer prefix-related title."""
+    sessions = [
+        {"agent": "grok", "session_id": "a", "pid": 100, "cwd": "/p/a"},
+        {"agent": "grok", "session_id": "b", "pid": 200, "cwd": "/p/b"},
+    ]
+    panes = [
+        {
+            "pane_pid": 100,
+            "command": "grok",
+            "path": "/p/a",
+            "attached": True,
+            "pane_title": "Fix the login bug - grok",
+        },
+        {
+            "pane_pid": 200,
+            "command": "grok",
+            "path": "/p/b",
+            "attached": True,
+            "pane_title": "Fix the login bug in production auth - grok",
+        },
+    ]
+    monkeypatch.setattr(al, "descendants", lambda *a, **k: [])
+    monkeypatch.setattr(al, "children_map", lambda: {})
+    link = al.find_agent_link(
+        1,
+        app="ghostty",
+        title="Fix the login bug - grok",
+        sessions=sessions,
+        tree={},
+        panes=panes,
+    )
+    assert link is not None
+    assert link["session_id"] == "a"
+    assert "tmux_pane_title" in link["match"]
+
+
+def test_find_agent_link_identical_pane_titles_refuse(monkeypatch) -> None:
+    """Two panes with the same title must not pick list-order winner."""
+    sessions = [
+        {"agent": "grok", "session_id": "a", "pid": 100, "cwd": "/p/a"},
+        {"agent": "grok", "session_id": "b", "pid": 200, "cwd": "/p/b"},
+    ]
+    panes = [
+        {
+            "pane_pid": 100,
+            "command": "grok",
+            "path": "/p/a",
+            "attached": True,
+            "pane_title": "Same Session Name Here - grok",
+        },
+        {
+            "pane_pid": 200,
+            "command": "grok",
+            "path": "/p/b",
+            "attached": True,
+            "pane_title": "Same Session Name Here - grok",
+        },
+    ]
+    monkeypatch.setattr(al, "descendants", lambda *a, **k: [])
+    monkeypatch.setattr(al, "children_map", lambda: {})
+    link = al.find_agent_link(
+        1,
+        app="ghostty",
+        title="Same Session Name Here - grok",
+        sessions=sessions,
+        tree={},
+        panes=panes,
+    )
+    # Ambiguous exact ties must not list-order-win via pane_title
+    assert link is None
+
+
+def test_find_agent_link_empty_pane_title_no_title_match(monkeypatch) -> None:
+    panes = [
+        {
+            "pane_pid": 100,
+            "command": "grok",
+            "path": "/p/a",
+            "attached": True,
+            "pane_title": "",
+        },
+        {
+            "pane_pid": 200,
+            "command": "grok",
+            "path": "/p/b",
+            "attached": True,
+            "pane_title": "Real long enough session title - grok",
+        },
+    ]
+    monkeypatch.setattr(al, "descendants", lambda *a, **k: [])
+    monkeypatch.setattr(al, "children_map", lambda: {})
+    link = al.find_agent_link(
+        1,
+        app="ghostty",
+        title="Real long enough session title - grok",
+        sessions=[],
+        tree={},
+        panes=panes,
+    )
+    assert link is not None
+    assert link["cwd"] == "/p/b"
+    assert link["match"] == "tmux_pane_title"
+
+
+def test_find_agent_link_weak_tail_does_not_preempt(monkeypatch) -> None:
+    """Score-70 tail match alone must not attach cwd (fall through / refuse)."""
+    panes = [
+        {
+            "pane_pid": 200,
+            "command": "grok",
+            "path": "/wrong/repo",
+            "attached": True,
+            "pane_title": "Parent Session Title - grok",
+        },
+    ]
+    monkeypatch.setattr(al, "descendants", lambda *a, **k: [])
+    monkeypatch.setattr(al, "children_map", lambda: {})
+    link = al.find_agent_link(
+        1,
+        app="ghostty",
+        title="Running: Ask: something - Parent Session Title - grok",
+        sessions=[],
+        tree={},
+        panes=panes,
+    )
+    assert link is None
+
+
+def test_find_agent_link_process_tree_beats_pane_title(monkeypatch) -> None:
+    """session_pid under window wins before tmux pane_title path."""
+    sessions = [
+        {"agent": "grok", "session_id": "tree", "pid": 50, "cwd": "/from/tree"},
+        {"agent": "grok", "session_id": "title", "pid": 200, "cwd": "/from/title"},
+    ]
+    panes = [
+        {
+            "pane_pid": 200,
+            "command": "grok",
+            "path": "/from/title",
+            "attached": True,
+            "pane_title": "Unique Title For Pane Path - grok",
+        },
+    ]
+    monkeypatch.setattr(al, "descendants", lambda *a, **k: [])
+    monkeypatch.setattr(al, "children_map", lambda: {})
+    monkeypatch.setattr(al, "read_comm", lambda pid: "other")
+    link = al.find_agent_link(
+        50,
+        app="ghostty",
+        title="Unique Title For Pane Path - grok",
+        sessions=sessions,
+        tree={},
+        panes=panes,
+    )
+    assert link is not None
+    assert link["session_id"] == "tree"
+    assert link["match"] == "session_pid"
 
 
 def test_list_tmux_agent_panes_parse(monkeypatch) -> None:

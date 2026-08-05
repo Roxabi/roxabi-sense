@@ -9,7 +9,7 @@ from typing import Any
 
 from roxabi_sense.util.proc import children_map, descendants, read_comm, read_cwd
 from roxabi_sense.util.session_registry import load_all_sessions, load_grok_sessions
-from roxabi_sense.util.titles import normalize_title
+from roxabi_sense.util.titles import score_pane_title
 
 _AGENT_COMMS = frozenset({"grok", "claude"})
 _TERMINAL_APPS = frozenset({"ghostty", "unnamed"})
@@ -17,10 +17,8 @@ _TMUX = next(
     (p for p in ("/usr/bin/tmux", "/usr/local/bin/tmux") if Path(p).is_file()),
     None,
 )
-# Min core title length before substring / prefix pane matches count
-_PANE_TITLE_MIN = 12
-# Unique pane_title win needs this score margin over #2
-_PANE_TITLE_MARGIN = 15
+# Early-return pane_title path only at this score or above (exact/prefix).
+_PANE_TITLE_EARLY_MIN = 90
 
 # Re-export for callers that imported load_grok_sessions from here
 __all__ = [
@@ -144,51 +142,6 @@ def list_tmux_agent_panes() -> list[dict[str, Any]]:
     return panes
 
 
-def _title_core(title: str) -> str:
-    """Lowercase normalized title without trailing agent suffix."""
-    t = normalize_title(title or "").lower().strip()
-    for suf in (" - grok", " - claude"):
-        if t.endswith(suf):
-            t = t[: -len(suf)].strip()
-            break
-    # Collapse ellipsis variants for prefix compares
-    t = t.rstrip(".…").rstrip()
-    return t
-
-
-def score_pane_title(focus_title: str, pane_title: str) -> int:
-    """
-    How well a focus window title matches a tmux pane_title.
-
-    Ghostty/AT-SPI titles usually mirror ``#{pane_title}`` (after spinner strip).
-    Returns 0–100; 0 means no usable match.
-    """
-    a = _title_core(focus_title)
-    b = _title_core(pane_title)
-    if not a or not b:
-        return 0
-    if a == b:
-        return 100
-    # Full normalized strings (with agent suffix already stripped)
-    if len(a) >= _PANE_TITLE_MIN and len(b) >= _PANE_TITLE_MIN:
-        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
-        # Truncated titles: one is prefix of the other (ellipsis cut)
-        if longer.startswith(shorter) and len(shorter) >= _PANE_TITLE_MIN:
-            return 90
-        if shorter in longer and len(shorter) >= _PANE_TITLE_MIN:
-            return 80
-    # "Running: Ask: … - Parent Session Title" → parent may equal other pane core
-    if " - " in a:
-        tail = a.rsplit(" - ", 1)[-1].strip()
-        if tail and len(tail) >= _PANE_TITLE_MIN and (tail == b or b.startswith(tail) or tail in b):
-            return 70
-    if " - " in b:
-        tail = b.rsplit(" - ", 1)[-1].strip()
-        if tail and len(tail) >= _PANE_TITLE_MIN and (tail == a or a.startswith(tail) or tail in a):
-            return 70
-    return 0
-
-
 def _score_title_cwd(title: str, cwd: str) -> int:
     if not title or not cwd:
         return 0
@@ -294,8 +247,18 @@ def _find_via_pane_title(
     scored.sort(key=lambda x: x[0], reverse=True)
     best_sc, best_pane = scored[0]
     second_sc = scored[1][0] if len(scored) > 1 else 0
-    # Unique high-confidence pane title
-    if best_sc >= 70 and (len(scored) == 1 or best_sc >= second_sc + _PANE_TITLE_MARGIN):
+    # Identity class: unique exact always wins (even if a related pane scores 90).
+    if best_sc == 100 and second_sc < 100:
+        return _link_from_pane(
+            best_pane, sessions, tree=tree, match="tmux_pane_title"
+        )
+    # Prefix tier: unique best at ≥90 (strictly above #2). Weak 70/80 never preempt
+    # structural path/pid + basename scoring.
+    if (
+        best_sc >= _PANE_TITLE_EARLY_MIN
+        and best_sc > second_sc
+        and best_sc < 100
+    ):
         return _link_from_pane(
             best_pane, sessions, tree=tree, match="tmux_pane_title"
         )

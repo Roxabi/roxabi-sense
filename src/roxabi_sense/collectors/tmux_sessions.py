@@ -24,7 +24,24 @@ class TmuxSessionsCollector:
         if not self._tmux:
             return 0
         panes = self._list_panes()
-        fingerprint = json.dumps(panes, sort_keys=True)
+        # Fingerprint structure only — pane_title churns with Thinking/Running.
+        fingerprint = json.dumps(
+            [
+                {
+                    k: p.get(k)
+                    for k in (
+                        "session",
+                        "window",
+                        "window_name",
+                        "command",
+                        "path",
+                        "attached",
+                    )
+                }
+                for p in panes
+            ],
+            sort_keys=True,
+        )
         if fingerprint == self._last:
             return 0
         self._last = fingerprint
