@@ -34,7 +34,7 @@ dev = [
     "pip-licenses>=5.5.5",
     "pyright>=1.1.411",
     "pytest>=8.0",
-    "ruff>=0.16.1",
+    "ruff>=0.16.2",
     "mcp>=1.9",  # test MCP surface registration
 ]
 
