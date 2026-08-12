@@ -314,7 +314,7 @@ def test_day_recap_switch_metrics(tmp_path: Path) -> None:
     assert "ctx_raw" not in text
     assert "≥30s" not in text
     share = format_day_recap_share(recap)
-    assert share.startswith("sense ·")
-    assert "sw  " in share
-    assert "apps  " in share
-    assert len(share.splitlines()) <= 8
+    assert share.startswith("**sense ·")
+    assert "| switches | n |" in share
+    assert "| app | time | % |" in share
+    assert "| --- |" in share or "| --- | --- |" in share

@@ -177,80 +177,111 @@ def format_day_recap_share(
     *,
     max_apps: int = 5,
     max_repos: int = 4,
-    max_titles: int = 3,
+    max_titles: int = 4,
 ) -> str:
-    """Dense, copy-paste friendly day card (Slack / Discord / notes).
+    """Shareable day card as Markdown tables (Slack/GitHub/notes).
 
-    Fixed short block — no idle lists, no full agent dump.
+    No idle lists, no full agent dump — scannable tables only.
     """
     tracked = sum(s for _, s in recap.time_by_app)
-    head = (
-        f"sense · {recap.day} · focus {_fmt_dur(tracked)} · "
-        f"away {_fmt_dur(recap.away_total_s)}"
+    window = "—"
+    if recap.first_event and recap.last_event:
+        window = f"{_local_hm(recap.first_event)}–{_local_hm(recap.last_event)}"
+    meet = (
+        _fmt_dur(recap.meeting_total_s)
+        if recap.meeting_total_s > 0
+        else "—"
     )
-    if recap.meeting_total_s > 0:
-        head += f" · meet {_fmt_dur(recap.meeting_total_s)}"
-    if recap.session_shape:
-        head += f" · {recap.session_shape}"
+    shape = recap.session_shape or "—"
 
-    lines = [
-        head,
-        (
-            f"sw  {recap.focus_switches_app} app · "
-            f"{recap.focus_switches_context} ctx · {recap.focus_switches} title"
-        ),
-    ]
+    blocks: list[str] = [f"**sense · {recap.day}**", ""]
+    blocks.extend(
+        _md_table(
+            ["metric", "value"],
+            [
+                ["focus", _fmt_dur(tracked)],
+                ["away", _fmt_dur(recap.away_total_s)],
+                ["meet", meet],
+                ["shape", shape],
+                ["window", window],
+                ["agents", str(len(recap.agent_sessions))],
+            ],
+        )
+    )
+    blocks.append("")
+    blocks.extend(
+        _md_table(
+            ["switches", "n"],
+            [
+                ["app", str(recap.focus_switches_app)],
+                ["ctx", str(recap.focus_switches_context)],
+                ["title", str(recap.focus_switches)],
+            ],
+        )
+    )
+
     ts = recap.terminal_stays
     if ts.visits:
-        lines.append(
-            f"term  {ts.visits} visits · med {_fmt_dur(ts.median_s)} · "
-            f"≥2m {ts.ge_2m} ({_fmt_dur(ts.time_ge_2m_s)}) · "
-            f"≥5m {ts.ge_5m} ({_fmt_dur(ts.time_ge_5m_s)}) · "
-            f"≥10m {ts.ge_10m}"
+        blocks.append("")
+        blocks.extend(
+            _md_table(
+                ["terminal", "value"],
+                [
+                    ["visits", str(ts.visits)],
+                    ["median", _fmt_dur(ts.median_s)],
+                    ["≥2m", f"{ts.ge_2m} · {_fmt_dur(ts.time_ge_2m_s)}"],
+                    ["≥5m", f"{ts.ge_5m} · {_fmt_dur(ts.time_ge_5m_s)}"],
+                    ["≥10m", f"{ts.ge_10m} · {_fmt_dur(ts.time_ge_10m_s)}"],
+                ],
+            )
         )
 
-    apps = recap.top_apps[:max_apps] if recap.top_apps else []
-    if apps:
-        bits = " · ".join(
-            f"{_short_app(a.app)} {_fmt_dur(a.seconds)}" for a in apps
-        )
-        lines.append(f"apps  {bits}")
+    app_rows: list[list[str]] = []
+    if recap.top_apps:
+        for a in recap.top_apps[:max_apps]:
+            app_rows.append(
+                [
+                    _short_app(a.app),
+                    _fmt_dur(a.seconds),
+                    f"{a.share * 100:.0f}%",
+                ]
+            )
     elif recap.time_by_app:
-        bits = " · ".join(
-            f"{_short_app(a)} {_fmt_dur(s)}" for a, s in recap.time_by_app[:max_apps]
-        )
-        lines.append(f"apps  {bits}")
+        total = sum(s for _, s in recap.time_by_app) or 1.0
+        for name, secs in recap.time_by_app[:max_apps]:
+            app_rows.append(
+                [
+                    _short_app(name),
+                    _fmt_dur(secs),
+                    f"{secs / total * 100:.0f}%",
+                ]
+            )
+    if app_rows:
+        blocks.append("")
+        blocks.extend(_md_table(["app", "time", "%"], app_rows))
 
     if recap.time_by_repo:
-        bits = " · ".join(
-            f"{_short_repo(r)} {_fmt_dur(s)}"
+        repo_total = sum(s for _, s in recap.time_by_repo) or 1.0
+        repo_rows = [
+            [
+                _short_repo(r),
+                _fmt_dur(s),
+                f"{s / repo_total * 100:.0f}%",
+            ]
             for r, s in recap.time_by_repo[:max_repos]
-        )
-        lines.append(f"repos {bits}")
+        ]
+        blocks.append("")
+        blocks.extend(_md_table(["repo", "time", "%"], repo_rows))
 
     if recap.top_titles:
-        bits = " · ".join(
-            f"{_short_title(t)} {_fmt_dur(s)}"
+        title_rows = [
+            [_short_title(t, max_len=36), _fmt_dur(s)]
             for t, s, _app in recap.top_titles[:max_titles]
-        )
-        lines.append(f"top   {bits}")
+        ]
+        blocks.append("")
+        blocks.extend(_md_table(["top window", "time"], title_rows))
 
-    n_agents = len(recap.agent_sessions)
-    meet_n = len(recap.meeting_sessions)
-    extra: list[str] = []
-    if n_agents:
-        extra.append(f"{n_agents} agents")
-    if meet_n:
-        extra.append(f"{meet_n} meet")
-    elif recap.meeting_total_s <= 0:
-        extra.append("no meet")
-    if recap.first_event and recap.last_event:
-        extra.append(
-            f"{_local_hm(recap.first_event)}–{_local_hm(recap.last_event)}"
-        )
-    if extra:
-        lines.append("meta  " + " · ".join(extra))
-    return "\n".join(lines)
+    return "\n".join(blocks)
 
 
 def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 24) -> str:
@@ -412,6 +443,22 @@ def _local_hm(ts: str) -> str:
 
 def _pad(text: str, width: int) -> str:
     return text.ljust(width) if len(text) <= width else text[: width - 1] + "…"
+
+
+def _md_table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    """GitHub-flavored markdown table (renders in Slack/GitHub/notes)."""
+    if not headers:
+        return []
+    sep = ["---"] * len(headers)
+    out = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(sep) + " |",
+    ]
+    for row in rows:
+        cells = list(row) + [""] * max(0, len(headers) - len(row))
+        cells = [c.replace("|", "\\|") for c in cells[: len(headers)]]
+        out.append("| " + " | ".join(cells) + " |")
+    return out
 
 
 def _short_app(app: str) -> str:
