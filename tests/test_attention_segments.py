@@ -315,6 +315,8 @@ def test_day_recap_switch_metrics(tmp_path: Path) -> None:
     assert "≥30s" not in text
     share = format_day_recap_share(recap)
     assert share.startswith("**sense ·")
-    assert "| switches | n |" in share
-    assert "| app | time | % |" in share
-    assert "| --- |" in share or "| --- | --- |" in share
+    assert "| # | app | repo | top window |" in share
+    # At most two markdown tables (one separator line each)
+    sep_lines = [ln for ln in share.splitlines() if ln.startswith("| ---")]
+    assert len(sep_lines) == 2
+    assert "switches" in share

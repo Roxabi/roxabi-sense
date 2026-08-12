@@ -175,13 +175,12 @@ def compile_day_recap(
 def format_day_recap_share(
     recap: DayRecap,
     *,
-    max_apps: int = 5,
-    max_repos: int = 4,
-    max_titles: int = 4,
+    max_rank: int = 4,
 ) -> str:
-    """Shareable day card as Markdown tables (Slack/GitHub/notes).
+    """Shareable day card: at most **two** Markdown tables.
 
-    No idle lists, no full agent dump — scannable tables only.
+    1. Day overview (metrics + switches + terminal in one key/value table)
+    2. Ranked tops (app · repo · window side by side)
     """
     tracked = sum(s for _, s in recap.time_by_app)
     window = "—"
@@ -193,94 +192,80 @@ def format_day_recap_share(
         else "—"
     )
     shape = recap.session_shape or "—"
-
-    blocks: list[str] = [f"**sense · {recap.day}**", ""]
-    blocks.extend(
-        _md_table(
-            ["metric", "value"],
-            [
-                ["focus", _fmt_dur(tracked)],
-                ["away", _fmt_dur(recap.away_total_s)],
-                ["meet", meet],
-                ["shape", shape],
-                ["window", window],
-                ["agents", str(len(recap.agent_sessions))],
-            ],
-        )
-    )
-    blocks.append("")
-    blocks.extend(
-        _md_table(
-            ["switches", "n"],
-            [
-                ["app", str(recap.focus_switches_app)],
-                ["ctx", str(recap.focus_switches_context)],
-                ["title", str(recap.focus_switches)],
-            ],
-        )
-    )
-
     ts = recap.terminal_stays
     if ts.visits:
-        blocks.append("")
-        blocks.extend(
-            _md_table(
-                ["terminal", "value"],
-                [
-                    ["visits", str(ts.visits)],
-                    ["median", _fmt_dur(ts.median_s)],
-                    ["≥2m", f"{ts.ge_2m} · {_fmt_dur(ts.time_ge_2m_s)}"],
-                    ["≥5m", f"{ts.ge_5m} · {_fmt_dur(ts.time_ge_5m_s)}"],
-                    ["≥10m", f"{ts.ge_10m} · {_fmt_dur(ts.time_ge_10m_s)}"],
-                ],
-            )
+        term = (
+            f"{ts.visits} vis · med {_fmt_dur(ts.median_s)} · "
+            f"≥2m {ts.ge_2m} ({_fmt_dur(ts.time_ge_2m_s)}) · "
+            f"≥5m {ts.ge_5m} ({_fmt_dur(ts.time_ge_5m_s)}) · "
+            f"≥10m {ts.ge_10m}"
         )
+    else:
+        term = "—"
 
-    app_rows: list[list[str]] = []
+    overview = _md_table(
+        ["metric", "value"],
+        [
+            ["day", f"{recap.day} · {window} · {shape}"],
+            ["focus / away", f"{_fmt_dur(tracked)} / {_fmt_dur(recap.away_total_s)}"],
+            ["meet / agents", f"{meet} / {len(recap.agent_sessions)}"],
+            [
+                "switches",
+                (
+                    f"{recap.focus_switches_app} app · "
+                    f"{recap.focus_switches_context} ctx · "
+                    f"{recap.focus_switches} title"
+                ),
+            ],
+            ["terminal", term],
+        ],
+    )
+
+    # Parallel rank columns: app | repo | top window
+    apps: list[tuple[str, str]] = []
     if recap.top_apps:
-        for a in recap.top_apps[:max_apps]:
-            app_rows.append(
-                [
-                    _short_app(a.app),
-                    _fmt_dur(a.seconds),
-                    f"{a.share * 100:.0f}%",
-                ]
-            )
+        apps = [
+            (_short_app(a.app), f"{_fmt_dur(a.seconds)} ({a.share * 100:.0f}%)")
+            for a in recap.top_apps[:max_rank]
+        ]
     elif recap.time_by_app:
         total = sum(s for _, s in recap.time_by_app) or 1.0
-        for name, secs in recap.time_by_app[:max_apps]:
-            app_rows.append(
-                [
-                    _short_app(name),
-                    _fmt_dur(secs),
-                    f"{secs / total * 100:.0f}%",
-                ]
-            )
-    if app_rows:
-        blocks.append("")
-        blocks.extend(_md_table(["app", "time", "%"], app_rows))
-
+        apps = [
+            (_short_app(n), f"{_fmt_dur(s)} ({s / total * 100:.0f}%)")
+            for n, s in recap.time_by_app[:max_rank]
+        ]
+    repos: list[tuple[str, str]] = []
     if recap.time_by_repo:
-        repo_total = sum(s for _, s in recap.time_by_repo) or 1.0
-        repo_rows = [
+        rtot = sum(s for _, s in recap.time_by_repo) or 1.0
+        repos = [
+            (_short_repo(r), f"{_fmt_dur(s)} ({s / rtot * 100:.0f}%)")
+            for r, s in recap.time_by_repo[:max_rank]
+        ]
+    titles: list[tuple[str, str]] = [
+        (_short_title(t, max_len=32), _fmt_dur(s))
+        for t, s, _a in recap.top_titles[:max_rank]
+    ]
+
+    n = max(len(apps), len(repos), len(titles), 0)
+    blocks = [f"**sense · {recap.day}**", "", *overview]
+    if n == 0:
+        return "\n".join(blocks)
+
+    rank_rows: list[list[str]] = []
+    for i in range(n):
+        a_name, a_t = apps[i] if i < len(apps) else ("", "")
+        r_name, r_t = repos[i] if i < len(repos) else ("", "")
+        t_name, t_t = titles[i] if i < len(titles) else ("", "")
+        rank_rows.append(
             [
-                _short_repo(r),
-                _fmt_dur(s),
-                f"{s / repo_total * 100:.0f}%",
+                str(i + 1),
+                f"{a_name} {a_t}".strip(),
+                f"{r_name} {r_t}".strip(),
+                f"{t_name} {t_t}".strip(),
             ]
-            for r, s in recap.time_by_repo[:max_repos]
-        ]
-        blocks.append("")
-        blocks.extend(_md_table(["repo", "time", "%"], repo_rows))
-
-    if recap.top_titles:
-        title_rows = [
-            [_short_title(t, max_len=36), _fmt_dur(s)]
-            for t, s, _app in recap.top_titles[:max_titles]
-        ]
-        blocks.append("")
-        blocks.extend(_md_table(["top window", "time"], title_rows))
-
+        )
+    blocks.append("")
+    blocks.extend(_md_table(["#", "app", "repo", "top window"], rank_rows))
     return "\n".join(blocks)
 
 
