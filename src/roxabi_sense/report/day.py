@@ -26,10 +26,14 @@ from roxabi_sense.report.meeting_sessions import (
 from roxabi_sense.report.segments import (
     MIN_DWELL_S,
     FocusSegment,
+    TerminalStayStats,
+    attention_segments,
     focus_segments,
     horizon_dt,
     hour_apps,
     sum_by,
+    switch_count,
+    terminal_stay_stats,
     top_titles,
 )
 from roxabi_sense.report.top_apps import AppDwell, session_shape, top_apps
@@ -46,8 +50,16 @@ class DayRecap:
     kind_counts: dict[str, int]
     first_event: str | None
     last_event: str | None
+    # Title-grain (fine) segment boundaries — noisy under AT-SPI agent renames.
     focus_switches: int
+    # App-only switches (ghostty→slack); undercounts multi-ghostty contexts.
+    focus_switches_app: int
+    # Attention-key hops (session/agent); short 3–5s agent checks count.
+    focus_switches_context: int
     focus_segments: list[FocusSegment]
+    attention_segments: list[FocusSegment]
+    # Complementary: continuous terminal visits (how long you stay, not hop count).
+    terminal_stays: TerminalStayStats
     away_segments: list[AwaySegment]
     away_total_s: float
     # ADR-004: meeting_total_s = Σ in_call sessions only (not idle overlay sum).
@@ -102,6 +114,8 @@ def compile_day_recap(
     )
     focus_ev = [e for e in events if e.kind == "focus"]
     segments = focus_segments(focus_ev, away, horizon=horizon)
+    attn = attention_segments(segments)
+    stays = terminal_stay_stats(attn)
 
     apps = top_apps(segments, limit=20)
     time_by_app = [(a.app, a.seconds) for a in apps]
@@ -120,6 +134,9 @@ def compile_day_recap(
         events,
         focus_backend=store.get_meta("focus_backend"),
     )
+    title_sw = max(0, len(segments) - 1) if segments else 0
+    app_sw = switch_count(segments, key=lambda s: s.app)
+    ctx_sw = max(0, len(attn) - 1) if attn else 0
 
     return DayRecap(
         day=day_label,
@@ -129,8 +146,12 @@ def compile_day_recap(
         kind_counts=dict(sorted(kind_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
         first_event=first_ts,
         last_event=last_ts,
-        focus_switches=max(0, len(segments) - 1) if segments else 0,
+        focus_switches=title_sw,
+        focus_switches_app=app_sw,
+        focus_switches_context=ctx_sw,
         focus_segments=segments,
+        attention_segments=attn,
+        terminal_stays=stays,
         away_segments=away,
         away_total_s=sum(a.duration_s for a in pure_away),
         meeting_total_s=meeting_total_s,
@@ -148,7 +169,7 @@ def compile_day_recap(
         media=media_tracks(events),
         idle_events=kind_counts.get("idle", 0),
         hour_apps=hour_apps(segments, away, meetings=sessions),
-        session_shape=session_shape(segments, away),
+        session_shape=session_shape(attn, away),
     )
 
 def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 24) -> str:
@@ -167,6 +188,18 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
     ]
     if recap.session_shape:
         lines.append(f"session_shape: {recap.session_shape}")
+    lines.append(
+        f"focus_switches: {recap.focus_switches_app} app · "
+        f"{recap.focus_switches_context} ctx · {recap.focus_switches} title"
+    )
+    ts = recap.terminal_stays
+    if ts.visits:
+        lines.append(
+            f"terminal_stays: {ts.visits} visits · median {_fmt_dur(ts.median_s)} · "
+            f"≥2m {ts.ge_2m} ({_fmt_dur(ts.time_ge_2m_s)}) · "
+            f"≥5m {ts.ge_5m} ({_fmt_dur(ts.time_ge_5m_s)}) · "
+            f"≥10m {ts.ge_10m} ({_fmt_dur(ts.time_ge_10m_s)})"
+        )
     if recap.kind_counts:
         kinds = "  ".join(f"{k}={v}" for k, v in list(recap.kind_counts.items())[:8])
         lines.append(f"kinds: {kinds}")

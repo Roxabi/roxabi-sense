@@ -58,6 +58,9 @@ def session_shape(
 ) -> str | None:
     """Heuristic day shape — deterministic, local only (no XP/cloud).
 
+    Pass **attention** segments (``attention_segments``), not fine title
+    segments — otherwise AT-SPI title thrash forces ``fragmented``.
+
     Returns one of:
       deep | steady | fragmented | drifted
     or None if insufficient data.
@@ -65,7 +68,7 @@ def session_shape(
     Definitions (fixed thresholds):
     - **insufficient** (None): tracked focus < min_tracked_s or < 2 segments
     - **drifted**: away (non-meeting) ≥ 45% of (focus + away)
-    - **fragmented**: ≥ 12 focus switches per hour of focus OR median dwell < 2m
+    - **fragmented**: ≥ 12 context switches per hour of focus OR median dwell < 2m
     - **deep**: median dwell ≥ 10m AND ≤ 4 switches/hour
     - **steady**: otherwise
     """
