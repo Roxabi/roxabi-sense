@@ -307,10 +307,14 @@ def test_day_recap_switch_metrics(tmp_path: Path) -> None:
     assert recap.focus_switches >= recap.focus_switches_context
     assert len(recap.attention_segments) == 3
     assert recap.terminal_stays.visits >= 1
+    assert recap.terminal_stays.mean_s > 0
     text = format_day_recap(recap)
     assert "focus_switches:" in text
     assert "ctx ·" in text and "title" in text
     assert "terminal_stays:" in text
+    assert "avg " in text
+    share_text = format_day_recap_share(recap)
+    assert "avg " in share_text
     assert "ctx_raw" not in text
     assert "≥30s" not in text
     share = format_day_recap_share(recap)

@@ -196,6 +196,7 @@ def format_day_recap_share(
     if ts.visits:
         term = (
             f"{ts.visits} vis · med {_fmt_dur(ts.median_s)} · "
+            f"avg {_fmt_dur(ts.mean_s)} · "
             f"≥2m {ts.ge_2m} ({_fmt_dur(ts.time_ge_2m_s)}) · "
             f"≥5m {ts.ge_5m} ({_fmt_dur(ts.time_ge_5m_s)}) · "
             f"≥10m {ts.ge_10m}"
@@ -293,6 +294,7 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
     if ts.visits:
         lines.append(
             f"terminal_stays: {ts.visits} visits · median {_fmt_dur(ts.median_s)} · "
+            f"avg {_fmt_dur(ts.mean_s)} · "
             f"≥2m {ts.ge_2m} ({_fmt_dur(ts.time_ge_2m_s)}) · "
             f"≥5m {ts.ge_5m} ({_fmt_dur(ts.time_ge_5m_s)}) · "
             f"≥10m {ts.ge_10m} ({_fmt_dur(ts.time_ge_10m_s)})"
