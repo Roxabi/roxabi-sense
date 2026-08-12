@@ -1,6 +1,11 @@
 """Compiled products over the event store (day recap, presence, status, etc.)."""
 
-from roxabi_sense.report.day import DayRecap, compile_day_recap, format_day_recap
+from roxabi_sense.report.day import (
+    DayRecap,
+    compile_day_recap,
+    format_day_recap,
+    format_day_recap_share,
+)
 from roxabi_sense.report.event_summary import summarize_event
 from roxabi_sense.report.presence import (
     Presence,
@@ -24,6 +29,7 @@ __all__ = [
     "compile_day_recap",
     "derive_presence",
     "format_day_recap",
+    "format_day_recap_share",
     "format_presence_lines",
     "load_status_snapshot",
     "presence_from_store",

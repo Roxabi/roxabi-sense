@@ -16,6 +16,7 @@ from roxabi_sense.report import (
     StatusSnapshot,
     compile_day_recap,
     format_day_recap,
+    format_day_recap_share,
     format_presence_lines,
     load_status_snapshot,
     summarize_event,
@@ -63,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
         help="YYYY-MM-DD (local day, default: today)",
     )
     p_recap.add_argument("--json", action="store_true", help="JSON object output")
+    p_recap.add_argument(
+        "--share",
+        action="store_true",
+        help="Dense copy-paste card (Slack/Discord/notes)",
+    )
 
     sub.add_parser("daemon", help="Run collectors in foreground")
     sub.add_parser("mcp", help="Run MCP stdio server (uv sync --extra mcp)")
@@ -103,7 +109,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "day":
         return cmd_day(cfg.db_path, day=args.day, as_json=args.json, limit=args.limit)
     if args.cmd == "recap":
-        return cmd_recap(cfg.db_path, day=args.day, as_json=args.json)
+        return cmd_recap(
+            cfg.db_path, day=args.day, as_json=args.json, share=args.share
+        )
     if args.cmd == "install-service":
         code, msg = install_service()
         print(msg)
@@ -259,7 +267,13 @@ def cmd_day(db_path: Path, *, day: str | None, as_json: bool, limit: int) -> int
     return 0
 
 
-def cmd_recap(db_path: Path, *, day: str | None, as_json: bool) -> int:
+def cmd_recap(
+    db_path: Path,
+    *,
+    day: str | None,
+    as_json: bool,
+    share: bool = False,
+) -> int:
     if not db_path.is_file():
         print(f"db: missing ({db_path})", file=sys.stderr)
         return 1
@@ -271,6 +285,8 @@ def cmd_recap(db_path: Path, *, day: str | None, as_json: bool) -> int:
         return 2
     if as_json:
         print(json.dumps(recap.to_dict(), ensure_ascii=False, indent=2))
+    elif share:
+        print(format_day_recap_share(recap))
     else:
         print(format_day_recap(recap))
     return 0

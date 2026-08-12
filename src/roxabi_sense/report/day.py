@@ -172,6 +172,87 @@ def compile_day_recap(
         session_shape=session_shape(attn, away),
     )
 
+def format_day_recap_share(
+    recap: DayRecap,
+    *,
+    max_apps: int = 5,
+    max_repos: int = 4,
+    max_titles: int = 3,
+) -> str:
+    """Dense, copy-paste friendly day card (Slack / Discord / notes).
+
+    Fixed short block — no idle lists, no full agent dump.
+    """
+    tracked = sum(s for _, s in recap.time_by_app)
+    head = (
+        f"sense · {recap.day} · focus {_fmt_dur(tracked)} · "
+        f"away {_fmt_dur(recap.away_total_s)}"
+    )
+    if recap.meeting_total_s > 0:
+        head += f" · meet {_fmt_dur(recap.meeting_total_s)}"
+    if recap.session_shape:
+        head += f" · {recap.session_shape}"
+
+    lines = [
+        head,
+        (
+            f"sw  {recap.focus_switches_app} app · "
+            f"{recap.focus_switches_context} ctx · {recap.focus_switches} title"
+        ),
+    ]
+    ts = recap.terminal_stays
+    if ts.visits:
+        lines.append(
+            f"term  {ts.visits} visits · med {_fmt_dur(ts.median_s)} · "
+            f"≥2m {ts.ge_2m} ({_fmt_dur(ts.time_ge_2m_s)}) · "
+            f"≥5m {ts.ge_5m} ({_fmt_dur(ts.time_ge_5m_s)}) · "
+            f"≥10m {ts.ge_10m}"
+        )
+
+    apps = recap.top_apps[:max_apps] if recap.top_apps else []
+    if apps:
+        bits = " · ".join(
+            f"{_short_app(a.app)} {_fmt_dur(a.seconds)}" for a in apps
+        )
+        lines.append(f"apps  {bits}")
+    elif recap.time_by_app:
+        bits = " · ".join(
+            f"{_short_app(a)} {_fmt_dur(s)}" for a, s in recap.time_by_app[:max_apps]
+        )
+        lines.append(f"apps  {bits}")
+
+    if recap.time_by_repo:
+        bits = " · ".join(
+            f"{_short_repo(r)} {_fmt_dur(s)}"
+            for r, s in recap.time_by_repo[:max_repos]
+        )
+        lines.append(f"repos {bits}")
+
+    if recap.top_titles:
+        bits = " · ".join(
+            f"{_short_title(t)} {_fmt_dur(s)}"
+            for t, s, _app in recap.top_titles[:max_titles]
+        )
+        lines.append(f"top   {bits}")
+
+    n_agents = len(recap.agent_sessions)
+    meet_n = len(recap.meeting_sessions)
+    extra: list[str] = []
+    if n_agents:
+        extra.append(f"{n_agents} agents")
+    if meet_n:
+        extra.append(f"{meet_n} meet")
+    elif recap.meeting_total_s <= 0:
+        extra.append("no meet")
+    if recap.first_event and recap.last_event:
+        extra.append(
+            f"{_local_hm(recap.first_event)}–{_local_hm(recap.last_event)}"
+        )
+    if extra:
+        lines.append("meta  " + " · ".join(extra))
+    return "\n".join(lines)
+
+
 def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 24) -> str:
     """Human-readable multi-line recap."""
     lines: list[str] = []
@@ -331,3 +412,30 @@ def _local_hm(ts: str) -> str:
 
 def _pad(text: str, width: int) -> str:
     return text.ljust(width) if len(text) <= width else text[: width - 1] + "…"
+
+
+def _short_app(app: str) -> str:
+    a = (app or "?").strip()
+    aliases = {
+        "Google Chrome": "chrome",
+        "whatsapp-desktop-linux": "whatsapp",
+    }
+    return aliases.get(a, a)
+
+
+def _short_repo(repo: str) -> str:
+    r = (repo or "").strip()
+    if "/" in r:
+        return r.rsplit("/", 1)[-1]
+    return r
+
+
+def _short_title(title: str, *, max_len: int = 28) -> str:
+    t = (title or "").strip()
+    for suf in (" - grok", " - claude", " - Grok", " - Claude"):
+        if t.endswith(suf):
+            t = t[: -len(suf)].strip()
+            break
+    if len(t) <= max_len:
+        return t
+    return t[: max_len - 1] + "…"

@@ -5,7 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from roxabi_sense.report.day import compile_day_recap, format_day_recap
+from roxabi_sense.report.day import (
+    compile_day_recap,
+    format_day_recap,
+    format_day_recap_share,
+)
 from roxabi_sense.report.segments import (
     FocusSegment,
     attention_key,
@@ -309,3 +313,8 @@ def test_day_recap_switch_metrics(tmp_path: Path) -> None:
     assert "terminal_stays:" in text
     assert "ctx_raw" not in text
     assert "≥30s" not in text
+    share = format_day_recap_share(recap)
+    assert share.startswith("sense ·")
+    assert "sw  " in share
+    assert "apps  " in share
+    assert len(share.splitlines()) <= 8
