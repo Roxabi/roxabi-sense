@@ -48,7 +48,8 @@ class TmuxSessionsCollector:
         if fingerprint == self._last:
             return 0
         self._last = fingerprint
-        store.append(KIND + "_snapshot", {"panes": panes, "count": len(panes)})
+        stored = [{k: v for k, v in p.items() if k != "pane_title"} for p in panes]
+        store.append(KIND + "_snapshot", {"panes": stored, "count": len(panes)})
         return 1
 
     def _list_panes(self) -> list[dict[str, Any]]:

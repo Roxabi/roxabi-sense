@@ -13,6 +13,7 @@ from typing import Any
 _CACHE_TTL_S = 2.0
 _TMUX_CANDIDATES = ("/usr/bin/tmux", "/usr/local/bin/tmux")
 _AGENT_COMMS = frozenset({"grok", "claude", "omp"})
+_HERDR_ID_KINDS = frozenset({"id", "uuid", "session_id"})
 
 _cache: dict[str, tuple[float, Any]] = {}
 
@@ -53,13 +54,18 @@ def tmux_bin() -> str | None:
     return None
 
 
+def _herdr_candidates() -> tuple[Path, Path]:
+    return (Path.home() / ".local" / "bin" / "herdr", Path("/usr/local/bin/herdr"))
+
+
 def herdr_bin() -> str | None:
+    candidates = _herdr_candidates()
+    for path in candidates:
+        if path.is_file():
+            return str(path)
     found = shutil.which("herdr")
-    if found:
+    if found and Path(found) in candidates:
         return found
-    local = Path.home() / ".local" / "bin" / "herdr"
-    if local.is_file():
-        return str(local)
     return None
 
 
@@ -177,9 +183,13 @@ def herdr_session_id(agent: dict[str, Any]) -> str:
     value = sess.get("value")
     if value is None or value == "":
         return ""
-    if sess.get("kind") == "path":
-        return Path(str(value)).stem
-    return str(value)
+    text = str(value)
+    kind = sess.get("kind")
+    if kind == "path" or "/" in text or ".jsonl" in text:
+        return Path(text).stem
+    if kind in _HERDR_ID_KINDS:
+        return text
+    return ""
 
 
 def herdr_session_rows(
@@ -223,6 +233,7 @@ def _herdr_agent_row(agent: dict[str, Any]) -> dict[str, Any]:
         "pane_id": str(agent.get("pane_id") or ""),
         "command": str(agent.get("agent") or ""),
         "path": str(agent.get("cwd") or ""),
-        "attached": bool(agent.get("focused")),
+        "attached": False,
+        "focused": bool(agent.get("focused")),
         "pane_title": str(agent.get("terminal_title_stripped") or ""),
     }

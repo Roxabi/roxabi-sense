@@ -13,6 +13,7 @@ def _pane(**kwargs: Any) -> dict[str, Any]:
         "command": "grok",
         "path": "/tmp/p",
         "attached": False,
+        "focused": False,
         "pane_title": "",
     }
     row.update(kwargs)
@@ -93,7 +94,7 @@ def test_generic_ghostty_title_uses_unique_focused_pane() -> None:
             pane_id=str(i),
             command="omp",
             path=f"/w/{i}",
-            attached=(i == 2),
+            focused=(i == 2),
             pane_title=f"Task {i}",
         )
         for i in range(6)
@@ -113,7 +114,7 @@ def test_generic_ghostty_title_uses_unique_focused_pane() -> None:
     assert link["cwd"] == "/w/2"
     assert link["session_id"] == "s2"
     assert link["agent"] == "omp"
-    assert "herdr_focused" in str(link["match"]) or "mux_focused" in str(link["match"])
+    assert str(link["match"]).startswith("herdr_focused")
 
 
 def test_tmux_grok_title_preferred_over_herdr_focus() -> None:
@@ -123,7 +124,7 @@ def test_tmux_grok_title_preferred_over_herdr_focus() -> None:
             pane_id="h",
             command="omp",
             path="/herdr/proj",
-            attached=True,
+            focused=True,
             pane_title="OMP work",
         ),
         _pane(
@@ -152,3 +153,82 @@ def test_tmux_grok_title_preferred_over_herdr_focus() -> None:
     assert link["agent"] == "grok"
     assert link["session_id"] == "grok-1"
     assert link["cwd"] == "/tmux/proj"
+
+
+def test_two_focused_herdr_panes_generic_ghostty_not_herdr_focused() -> None:
+    panes = [
+        _pane(
+            mux="herdr",
+            pane_id=str(i),
+            command="omp",
+            path=f"/w/{i}",
+            focused=True,
+            pane_title=f"Task {i}",
+        )
+        for i in (1, 2)
+    ]
+    sessions = [
+        {"agent": "omp", "session_id": f"s{i}", "cwd": f"/w/{i}"} for i in (1, 2)
+    ]
+    link = find_agent_link(
+        None,
+        app="ghostty",
+        title="Ghostty",
+        sessions=sessions,
+        tree={},
+        panes=panes,
+    )
+    assert link is None or (
+        "herdr_focused" not in str(link["match"])
+        and "mux_focused" not in str(link["match"])
+    )
+
+
+def test_unrelated_title_skips_unique_herdr_focus() -> None:
+    panes = [
+        _pane(
+            mux="herdr",
+            pane_id="h",
+            command="omp",
+            path="/herdr/proj",
+            focused=True,
+            pane_title="OMP work",
+        )
+    ]
+    sessions = [
+        {"agent": "omp", "session_id": "omp-1", "cwd": "/herdr/proj"},
+    ]
+    link = find_agent_link(
+        None,
+        app="ghostty",
+        title="Inbox — Thunderbird",
+        sessions=sessions,
+        tree={},
+        panes=panes,
+    )
+    assert link is None or "focused" not in str(link["match"])
+
+
+def test_chrome_only_title_skips_unique_herdr_focus() -> None:
+    panes = [
+        _pane(
+            mux="herdr",
+            pane_id="h",
+            command="omp",
+            path="/herdr/proj",
+            focused=True,
+            pane_title="π >",
+        )
+    ]
+    sessions = [
+        {"agent": "omp", "session_id": "omp-1", "cwd": "/herdr/proj"},
+    ]
+    link = find_agent_link(
+        None,
+        app="ghostty",
+        title="π >",
+        sessions=sessions,
+        tree={},
+        panes=panes,
+    )
+    assert link is None or "focused" not in str(link["match"])

@@ -103,16 +103,17 @@ def _parse_grok_file(path: Path) -> list[dict[str, Any]]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        out.append(
-            {
-                "agent": "grok",
-                "session_id": item.get("session_id"),
-                "pid": item.get("pid"),
-                "cwd": item.get("cwd"),
-                "opened_at": item.get("opened_at"),
-                "source": str(path),
-            }
-        )
+        row = {
+            "agent": "grok",
+            "session_id": item.get("session_id"),
+            "pid": item.get("pid"),
+            "cwd": item.get("cwd"),
+            "opened_at": item.get("opened_at"),
+            "source": str(path),
+        }
+        if item.get("state"):
+            row["state"] = item.get("state")
+        out.append(row)
     return out
 
 

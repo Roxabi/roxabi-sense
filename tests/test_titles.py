@@ -1,4 +1,9 @@
-from roxabi_sense.util.titles import normalize_title, sanitize_display, title_core
+from roxabi_sense.util.titles import (
+    is_generic_app_title,
+    normalize_title,
+    sanitize_display,
+    title_core,
+)
 
 
 def test_strip_thinking_spinner() -> None:
@@ -43,3 +48,18 @@ def test_omp_pi_prompt_prefix() -> None:
     assert normalize_title(raw) == "PR foo"
     assert title_core(raw) == "pr foo"
     assert title_core("π > PR foo - omp") == "pr foo"
+
+
+def test_chrome_only_title_is_not_generic_app() -> None:
+    assert normalize_title("π") == ""
+    assert normalize_title("π >") == ""
+    assert normalize_title("⠋") == ""
+    assert not is_generic_app_title("")
+    assert not is_generic_app_title("π")
+    assert not is_generic_app_title("π >")
+    assert not is_generic_app_title("⠋")
+    assert is_generic_app_title("Ghostty")
+    assert is_generic_app_title("herdr")
+    assert is_generic_app_title("unnamed")
+    assert not is_generic_app_title("PR foo")
+

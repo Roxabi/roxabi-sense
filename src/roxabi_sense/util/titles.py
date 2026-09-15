@@ -62,6 +62,17 @@ def normalize_title(title: str) -> str:
     return t.strip()
 
 
+_GENERIC_APP_TITLES = frozenset({"ghostty", "herdr", "unnamed"})
+
+
+def is_generic_app_title(title: str) -> bool:
+    """True for genuine app names, not empty or chrome-stripped (π, spinner)."""
+    raw = (title or "").strip()
+    if not raw:
+        return False
+    return normalize_title(raw).strip().lower() in _GENERIC_APP_TITLES
+
+
 # Min core length before prefix/substring pane matches count (agent_link).
 _PANE_TITLE_MIN = 12
 

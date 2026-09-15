@@ -5,6 +5,7 @@ from pathlib import Path
 
 from roxabi_sense.collectors.agent_sessions import AgentSessionsCollector
 from roxabi_sense.store import Store
+from roxabi_sense.util import mux
 from roxabi_sense.util.session_registry import SessionRegistry
 
 
@@ -188,30 +189,30 @@ def test_herdr_omp_row_in_snapshot(tmp_path: Path) -> None:
 
 def test_herdr_session_id_is_jsonl_stem(tmp_path: Path) -> None:
     grok, claude_dir = _empty_file_registry(tmp_path)
-    jsonl = Path("/home/me/.omp/projects/demo/deadbeef.jsonl")
-    session_id = jsonl.stem
+    raw_path = "/home/me/.omp/projects/demo/deadbeef.jsonl"
     store = Store(tmp_path / "s.db")
     c = AgentSessionsCollector(
         grok_path=grok,
         claude_history=tmp_path / "h.jsonl",
         claude_sessions_dir=claude_dir,
-        herdr_sessions=lambda: [
-            {
-                "agent": "omp",
-                "session_id": session_id,
-                "cwd": "/tmp/demo",
-                "state": "idle",
-                "source": "herdr",
-            }
-        ],
+        herdr_sessions=lambda: mux.herdr_session_rows(
+            [
+                {
+                    "agent": "omp",
+                    "cwd": "/tmp/demo",
+                    "agent_status": "idle",
+                    "agent_session": {"kind": "path", "value": raw_path},
+                }
+            ]
+        ),
     )
     c.tick(store)
     snap = store.last_by_kind("agent_sessions_snapshot")
     assert snap is not None
     row = snap.payload["sessions"][0]
-    assert session_id == "deadbeef"
     assert row["session_id"] == "deadbeef"
-    assert row["session_id"] != str(jsonl)
+    assert row["session_id"] != raw_path
+    assert ".jsonl" not in row["session_id"]
     store.close()
 
 
@@ -286,4 +287,38 @@ def test_grok_and_omp_together_duplicate_session_id_not_doubled(tmp_path: Path) 
     assert grok_row["cwd"] == "/tmp/proj"
     assert grok_row["state"] == "working"
     assert by_id["omp-unique"]["agent"] == "omp"
+    store.close()
+
+
+def test_grok_idle_kept_when_herdr_working(tmp_path: Path) -> None:
+    grok = tmp_path / "active_sessions.json"
+    grok.write_text(
+        json.dumps(
+            [{"session_id": "abc", "pid": 1, "cwd": "/tmp/proj", "state": "idle"}]
+        ),
+        encoding="utf-8",
+    )
+    claude_dir = tmp_path / "claude_sessions"
+    claude_dir.mkdir()
+    store = Store(tmp_path / "s.db")
+    c = AgentSessionsCollector(
+        grok_path=grok,
+        claude_history=tmp_path / "h.jsonl",
+        claude_sessions_dir=claude_dir,
+        herdr_sessions=lambda: [
+            {
+                "agent": "omp",
+                "session_id": "abc",
+                "cwd": "/tmp/other",
+                "state": "working",
+                "source": "herdr",
+            }
+        ],
+    )
+    assert c.tick(store) == 1
+    snap = store.last_by_kind("agent_sessions_snapshot")
+    assert snap is not None
+    grok_row = snap.payload["sessions"][0]
+    assert grok_row["agent"] == "grok"
+    assert grok_row["state"] == "idle"
     store.close()

@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 from roxabi_sense.util.mux import list_mux_agent_panes, list_tmux_agent_panes
 from roxabi_sense.util.proc import children_map, descendants, read_comm, read_cwd
 from roxabi_sense.util.session_registry import load_all_sessions, load_grok_sessions
-from roxabi_sense.util.titles import score_pane_title
+from roxabi_sense.util.titles import is_generic_app_title, score_pane_title
 
 _AGENT_COMMS = frozenset({"grok", "claude", "omp"})
 _TERMINAL_APPS = frozenset({"ghostty", "unnamed", "herdr"})
-_GENERIC_TITLES = frozenset({"ghostty", "herdr", "unnamed", ""})
+_HERDR_FOCUS_APPS = frozenset({"ghostty", "herdr"})
 _PANE_TITLE_EARLY_MIN = 90
+_UNIQUE_MARGIN = 5
+_TITLE_CWD_CAP = 4
+_CWD_TOKEN_RE = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*")
 
 __all__ = [
     "find_agent_link",
@@ -87,14 +91,13 @@ def _find_via_process_tree(
     return bare_comm
 
 
-def _is_generic_focus_title(title: str) -> bool:
-    return title.strip().lower() in _GENERIC_TITLES
-
-
-def _unique_attached_pane(panes: list[dict[str, Any]]) -> dict[str, Any] | None:
-    attached = [p for p in panes if p.get("attached")]
-    if len(attached) == 1:
-        return attached[0]
+def _unique_mux_pane(panes: list[dict[str, Any]], *, mux_name: str) -> dict[str, Any] | None:
+    if mux_name == "herdr":
+        hits = [p for p in panes if p.get("mux") == "herdr" and p.get("focused")]
+    else:
+        hits = [p for p in panes if p.get("mux") != "herdr" and p.get("attached")]
+    if len(hits) == 1:
+        return hits[0]
     return None
 
 
@@ -108,14 +111,14 @@ def _score_title_cwd(title: str, cwd: str) -> int:
     if not title or not cwd:
         return 0
     base = Path(cwd).name.lower()
-    if not base or len(base) < 3:
+    if len(base) < 3:
         return 0
-    t = title.lower()
-    if base in t:
-        return 25
-    soft = base.replace("-", " ").replace("_", " ")
-    if soft and soft in t:
-        return 15
+    tokens = set(_CWD_TOKEN_RE.findall(title.lower()))
+    if base in tokens:
+        return _TITLE_CWD_CAP
+    parts = [p for p in re.split(r"[-_]+", base) if p]
+    if len(parts) >= 2 and all(p in tokens for p in parts):
+        return _TITLE_CWD_CAP
     return 0
 
 
@@ -220,6 +223,7 @@ def _find_via_tmux(
     title: str,
     sessions: list[dict[str, Any]],
     *,
+    app: str = "",
     panes: list[dict[str, Any]] | None = None,
     tree: dict[int, list[int]] | None = None,
 ) -> dict[str, Any] | None:
@@ -230,12 +234,13 @@ def _find_via_tmux(
 
     cmap = tree if tree is not None else children_map()
 
-    if not _is_generic_focus_title(title):
+    if not is_generic_app_title(title):
         hit = _find_via_pane_title(title, sessions, panes=agent_panes, tree=cmap)
         if hit is not None:
             return hit
     else:
-        focused = _unique_attached_pane(agent_panes)
+        mux_name = "herdr" if app in _HERDR_FOCUS_APPS else "tmux"
+        focused = _unique_mux_pane(agent_panes, mux_name=mux_name)
         if focused is not None:
             return _link_from_pane(
                 focused, sessions, tree=cmap, match=_focused_match(focused)
@@ -264,8 +269,9 @@ def _find_via_tmux(
         s, match = resolved
         title_score = _score_title_cwd(title, str(s.get("cwd") or pane.get("path") or ""))
         base = 20 if match in {"tmux_child_pid", "tmux_pane_pid"} else 15
-        attached_bonus = 1 if pane.get("attached") else 0
-        scored.append((base + title_score, attached_bonus, s, match))
+        herdr = str(pane.get("mux") or "") == "herdr"
+        active = pane.get("focused") if herdr else pane.get("attached")
+        scored.append((base + title_score, 1 if active else 0, s, match))
 
     if not scored:
         return None
@@ -275,7 +281,7 @@ def _find_via_tmux(
     if len(unique) == 1:
         return _link_from_session(best_s, match=best_match)
     second = scored[1][0] if len(scored) > 1 else -1
-    if best_score >= second + 5:
+    if best_score >= second + _UNIQUE_MARGIN:
         return _link_from_session(best_s, match=f"{best_match}+title")
     return None
 
@@ -318,7 +324,7 @@ def find_agent_link(
     )
     if looks_agent or app_l in _TERMINAL_APPS:
         agent_panes = panes if panes is not None else list_mux_agent_panes()
-        tmux_hit = _find_via_tmux(title_s, sess, panes=agent_panes, tree=cmap)
+        tmux_hit = _find_via_tmux(title_s, sess, app=app_l, panes=agent_panes, tree=cmap)
         if tmux_hit is not None:
             return tmux_hit
 
