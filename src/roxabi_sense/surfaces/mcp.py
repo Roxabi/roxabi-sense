@@ -29,44 +29,74 @@ def build_mcp_server(cfg: SenseConfig):
     mcp = MCPServer(
         name="roxabi-sense",
         instructions=(
-            "Local workstation attention sensor. Tools read the local SQLite "
-            "store (facts only). Default redaction is coarse (no window titles "
-            "/ media / full paths) unless operator config sets mcp.detail=full."
+            "Local workstation attention sensor. Heartbeat: call care_brief. "
+            "Default redaction is coarse (no window titles / media / full paths)."
         ),
     )
 
     @mcp.tool()
     def sense_status() -> dict[str, Any]:
-        """Daemon health, presence, last collect meta."""
+        """Daemon health + presence (includes degraded_reason). No window titles."""
         return q.sense_status()
 
     @mcp.tool()
     def active_now() -> dict[str, Any]:
-        """Current presence, latest focus app, open agent sessions."""
+        """Current presence + focused app name. No window titles."""
         return q.active_now()
 
     @mcp.tool()
     def what_was_i_doing(day: str | None = None, limit: int = 50) -> dict[str, Any]:
-        """Timeline for a local calendar day (YYYY-MM-DD); default today.
-
-        Returns summarized events (coarse by default). limit caps event count.
-        """
+        """Timeline for a local day (YYYY-MM-DD). Coarse summaries; not for heartbeat."""
         return q.what_was_i_doing(day, limit=limit)
 
     @mcp.tool()
     def agent_sessions(day: str | None = None) -> dict[str, Any]:
-        """Claude/Grok sessions seen during a local calendar day."""
+        """Claude/Grok sessions for a local day. No transcripts."""
         return q.agent_sessions(day)
 
     @mcp.tool()
+    def care_brief(day: str | None = None) -> dict[str, Any]:
+        """Heartbeat day brief: apps/presence/shape. No window titles."""
+        return q.care_brief(day)
+
+    @mcp.tool()
     def day_recap(day: str | None = None) -> dict[str, Any]:
-        """Compiled day recap (apps, away, meetings, agents) as JSON."""
+        """Coarse day recap. Heartbeat uses care_brief. No detail=segments."""
         return q.day_recap(day)
 
     @mcp.tool()
     def top_apps(day: str | None = None, limit: int = 20) -> dict[str, Any]:
-        """Ranked app minutes for a local day (no titles — safe for coarse MCP)."""
+        """Ranked app minutes for a local day. No window titles."""
         return q.top_apps(day, limit=limit)
+
+    @mcp.resource("sense://care-brief/schema", mime_type="application/json")
+    def care_brief_schema() -> str:
+        return json.dumps(
+            {
+                "title": "care_brief",
+                "privacy": "no window titles",
+                "fields": [
+                    "day",
+                    "first_event",
+                    "last_event",
+                    "presence",
+                    "tracked_minutes",
+                    "away_minutes",
+                    "idle_events",
+                    "top_apps",
+                    "focus_switches",
+                    "longest_focus_app",
+                    "terminal_stays",
+                    "meetings",
+                    "agent_sessions",
+                    "agent_sessions_reason",
+                    "shape",
+                    "signals",
+                    "db_exists",
+                ],
+                "shape": ["focused", "fragmented", "drifted", "away", "unknown"],
+            }
+        )
 
     return mcp
 
@@ -101,7 +131,7 @@ def tool_catalog() -> list[dict[str, str]]:
         {
             "name": "active_now",
             "http": "GET /v1/active",
-            "returns": "presence + focus + agent sessions",
+            "returns": "presence + focus app name",
         },
         {
             "name": "what_was_i_doing",
@@ -114,9 +144,14 @@ def tool_catalog() -> list[dict[str, str]]:
             "returns": "agent sessions for day",
         },
         {
+            "name": "care_brief",
+            "http": "GET /v1/brief?day=",
+            "returns": "heartbeat day brief (no titles)",
+        },
+        {
             "name": "day_recap",
             "http": "GET /v1/recap?day=",
-            "returns": "compiled day recap JSON",
+            "returns": "coarse day recap (not care_brief; no segments arg)",
         },
         {
             "name": "top_apps",

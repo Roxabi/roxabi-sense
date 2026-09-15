@@ -26,6 +26,7 @@ class Presence:
     idle_since: str | None
     threshold_s: float
     session_bound: bool
+    degraded_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -46,6 +47,37 @@ def age_seconds(ts: str | None, *, now: datetime | None = None) -> float | None:
 def session_bound_now() -> bool:
     """True when a Wayland (or X11) display is visible to this process."""
     return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+
+def parse_session_bound_meta(raw: str | None) -> bool | None:
+    """Parse daemon-written session_bound meta. None → caller uses process env."""
+    if raw is None or raw == "":
+        return None
+    v = raw.strip().lower()
+    if v in {"1", "true", "yes"}:
+        return True
+    if v in {"0", "false", "no"}:
+        return False
+    return None
+
+
+def write_session_bound_meta(store: Store) -> None:
+    """Persist graphical-session visibility from the daemon process env."""
+    store.set_meta("session_bound", "1" if session_bound_now() else "0")
+
+
+def _degraded_reason(
+    *, bound: bool, watch: str, source: str = "", idle_flag: Any = None
+) -> str | None:
+    if watch == "dead":
+        return "idle_watch_dead"
+    if watch == "restarting":
+        return "idle_watch_restarting"
+    if idle_flag is True and source == "logind":
+        return "logind_idle"
+    if not bound:
+        return "no_display"
+    return None
 
 
 def derive_presence(
@@ -73,16 +105,18 @@ def derive_presence(
     watch = idle_watch or "n/a"
 
     if tick_age is None or tick_age > offline_threshold_s:
+        degraded = watch in {"dead", "restarting"} or not bound
         return Presence(
             state="offline",
             authority="daemon",
             confidence="high" if tick_age is not None else "inferred",
-            degraded=watch in {"dead", "restarting"} or not bound,
+            degraded=degraded,
             last_tick_age_s=tick_age,
             idle_watch=watch,
             idle_since=None,
             threshold_s=idle_threshold_s,
             session_bound=bound,
+            degraded_reason=_degraded_reason(bound=bound, watch=watch) if degraded else None,
         )
 
     payload = last_idle_payload if isinstance(last_idle_payload, dict) else {}
@@ -110,6 +144,11 @@ def derive_presence(
             idle_since=idle_since_s,
             threshold_s=float(payload.get("threshold_s") or idle_threshold_s),
             session_bound=bound,
+            degraded_reason=_degraded_reason(
+                bound=bound, watch=watch, source=source, idle_flag=idle_flag
+            )
+            if degraded
+            else None,
         )
 
     # Not input-idle. Watch death must not look like confident active.
@@ -124,19 +163,24 @@ def derive_presence(
             idle_since=None,
             threshold_s=idle_threshold_s,
             session_bound=bound,
+            degraded_reason="idle_watch_dead",
         )
 
     conf = "high" if watch in {"ready", "n/a"} and bound else "low"
+    degraded = degraded or not bound
     return Presence(
         state="active",
         authority="input" if watch == "ready" else source if source != "unknown" else "input",
         confidence=conf,
-        degraded=degraded or not bound,
+        degraded=degraded,
         last_tick_age_s=tick_age,
         idle_watch=watch,
         idle_since=None,
         threshold_s=idle_threshold_s,
         session_bound=bound,
+        degraded_reason=_degraded_reason(bound=bound, watch=watch, source=source)
+        if degraded
+        else None,
     )
 
 
@@ -152,6 +196,7 @@ def presence_from_store(
     idle_watch = store.get_meta("idle_watch") or "n/a"
     last_idle = store.last_by_kind("idle")
     payload = last_idle.payload if last_idle is not None else None
+    bound = parse_session_bound_meta(store.get_meta("session_bound"))
     return derive_presence(
         last_tick=last_tick,
         idle_watch=idle_watch,
@@ -159,6 +204,7 @@ def presence_from_store(
         now=now,
         offline_threshold_s=offline_threshold_s,
         idle_threshold_s=idle_threshold_s,
+        session_bound=bound,
     )
 
 
@@ -169,6 +215,7 @@ def format_presence_lines(p: Presence) -> list[str]:
         f"authority: {p.authority}",
         f"confidence: {p.confidence}",
         f"degraded: {str(p.degraded).lower()}",
+        f"degraded_reason: {p.degraded_reason or '—'}",
         f"last_tick_age_s: {age}",
         f"idle_watch: {p.idle_watch}",
         f"idle_since: {p.idle_since or '—'}",

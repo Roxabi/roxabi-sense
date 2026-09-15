@@ -46,6 +46,7 @@ def test_collect_once_writes_meta(tmp_path: Path, monkeypatch) -> None:
     assert n == 0
     store = Store(db)
     assert store.get_meta("last_tick") is not None
+    assert store.get_meta("session_bound") in {"0", "1"}
     store.close()
 
 
