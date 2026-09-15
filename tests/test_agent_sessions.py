@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
-from roxabi_sense.collectors.agent_sessions import AgentSessionsCollector
+from roxabi_sense.collectors.agent_sessions import AgentSessionsCollector, _snapshot_stale
 from roxabi_sense.store import Store
 from roxabi_sense.util import mux
 from roxabi_sense.util.session_registry import SessionRegistry
@@ -83,7 +84,7 @@ def test_missing_and_corrupt_grok(tmp_path: Path) -> None:
         claude_sessions_dir=empty_claude,
         herdr_sessions=lambda: [],
     )
-    assert c2.tick(store) == 1
+    assert c2.tick(store) == 0
     store.close()
 
 
@@ -322,3 +323,31 @@ def test_grok_idle_kept_when_herdr_working(tmp_path: Path) -> None:
     assert grok_row["agent"] == "grok"
     assert grok_row["state"] == "idle"
     store.close()
+
+
+def test_tick_refreshes_last_ok_without_new_event(tmp_path: Path) -> None:
+    grok, claude_dir = _empty_file_registry(tmp_path)
+    store = Store(tmp_path / "s.db")
+    c = AgentSessionsCollector(
+        grok_path=grok,
+        claude_history=tmp_path / "history.jsonl",
+        claude_sessions_dir=claude_dir,
+        herdr_sessions=lambda: [],
+    )
+    assert c.tick(store) == 1
+    assert c.tick(store) == 0
+    first_id = store.last_by_kind("agent_sessions_snapshot")
+    assert first_id is not None
+    store.set_meta("agent_sessions_last_ok", "2026-01-01T00:00:00Z")
+    assert c.tick(store) == 0
+    assert store.get_meta("agent_sessions_last_ok") != "2026-01-01T00:00:00Z"
+    snap = store.last_by_kind("agent_sessions_snapshot")
+    assert snap is not None
+    assert snap.id == first_id.id
+    store.close()
+
+
+def test_snapshot_stale_after_900s() -> None:
+    now = datetime(2026, 1, 1, 12, 15, 1, tzinfo=UTC)
+    assert _snapshot_stale("2026-01-01T12:00:00Z", now=now) is True
+    assert _snapshot_stale("2026-01-01T12:00:02Z", now=now) is False

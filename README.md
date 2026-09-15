@@ -179,7 +179,7 @@ sense doctor          # still green (host config is not a substitute for data pl
 sense status          # last_tick moving while daemon is up
 ```
 
-Then ask the agent for tools (`sense_status`, `active_now`, `what_was_i_doing`, …). If tools are missing: restart the host session; if tools return offline/empty: fix daemon/`sense doctor`, not MCP JSON.
+Then ask the agent for tools. Heartbeat agents should call **`care_brief`** (not `day_recap`). If tools are missing: restart the host session; if tools return offline/empty: fix daemon/`sense doctor`, not MCP JSON.
 
 #### Hardening (optional)
 

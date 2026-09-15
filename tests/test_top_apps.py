@@ -120,3 +120,8 @@ def test_day_recap_includes_top_apps(tmp_path: Path) -> None:
     recap = q.day_recap("2026-07-30")
     assert "top_apps" in recap
     assert "session_shape" in recap
+    assert recap["top_apps"]
+    assert "seconds" in recap["top_apps"][0]
+    brief = q.care_brief("2026-07-30")
+    assert "shape" in brief
+    assert "session_shape" not in brief

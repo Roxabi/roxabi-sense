@@ -67,6 +67,7 @@ def test_derive_watch_dead_not_confident_active() -> None:
     assert p.state == "active"
     assert p.confidence == "low"
     assert p.degraded is True
+    assert p.degraded_reason == "idle_watch_dead"
 
 
 def test_presence_from_store(tmp_path: Path) -> None:
@@ -88,6 +89,29 @@ def test_presence_from_store(tmp_path: Path) -> None:
         )
     assert p.state == "idle"
     assert p.authority == "wayland-idle"
+
+
+def test_presence_from_store_uses_daemon_session_bound(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    db = tmp_path / "s.db"
+    now = datetime(2026, 7, 30, 12, 0, 30, tzinfo=UTC)
+    with Store(db) as store:
+        store.set_meta("last_tick", "2026-07-30T12:00:00Z")
+        store.set_meta("idle_watch", "ready")
+        store.set_meta("session_bound", "1")
+        p = presence_from_store(store, now=now, offline_threshold_s=120)
+    assert p.session_bound is True
+    assert p.degraded is False
+    assert p.confidence == "high"
+    assert p.degraded_reason is None
+
+    with Store(db) as store:
+        store.set_meta("session_bound", "0")
+        unbound = presence_from_store(store, now=now, offline_threshold_s=120)
+    assert unbound.session_bound is False
+    assert unbound.degraded is True
+    assert unbound.degraded_reason == "no_display"
 
 
 def test_idle_since_bias() -> None:

@@ -82,15 +82,18 @@ It does **not** call an external MCP.
 
 | Tool | Suggested HTTP (future) | Returns |
 |---|---|---|
-| `sense_status` | `GET /v1/status` | Daemon health, presence |
-| `active_now` | `GET /v1/active` | Presence + latest focus + sessions |
+| `sense_status` | `GET /v1/status` | Daemon health, presence (`degraded_reason`) |
+| `active_now` | `GET /v1/active` | Presence + latest focus **app name** |
 | `what_was_i_doing` | `GET /v1/timeline?day=` | Day event summaries |
 | `agent_sessions` | `GET /v1/sessions?day=` | Sessions for day |
-| `day_recap` | `GET /v1/recap?day=` | Compiled recap JSON |
+| `care_brief` | `GET /v1/brief?day=` | Heartbeat day brief (no titles / segments) |
+| `day_recap` | `GET /v1/recap?day=` | Coarse recap (not `care_brief`; MCP has no `detail=segments`) |
 | `top_apps` | `GET /v1/top-apps?day=` | Ranked app seconds/minutes (local aggregate) |
 
 Default redaction: **coarse** (no titles / media / full paths). Operator may set
 `[mcp] detail = "full"` in config — **not** via tool arguments (ADR-002).
+`day_recap(detail=debug)` still requires that config to include titles.
+Heartbeat consumers must call **`care_brief`**, not `day_recap`.
 
 #### Install layers (do not collapse)
 
