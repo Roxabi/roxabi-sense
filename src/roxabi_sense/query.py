@@ -17,12 +17,12 @@ from roxabi_sense.report import (
     summarize_event,
 )
 from roxabi_sense.report.enrich import compile_care_brief
-from roxabi_sense.report.event_summary import redact_coarse as _redact_obj
+from roxabi_sense.report.event_summary import cap_json_bytes, redact_coarse as _redact_obj
 from roxabi_sense.report.presence import presence_from_store
 from roxabi_sense.store import DEFAULT_DAY_LIMIT, Store, clamp_event_limit
 
 DetailLevel = Literal["coarse", "full"]
-RecapDetail = Literal["summary", "segments", "debug"]
+RecapDetail = Literal["coarse", "summary", "segments", "debug"]
 
 
 @dataclass(frozen=True)
@@ -224,15 +224,13 @@ class SenseQuery:
             agent_payload=snap_payload,
         )
         body["db_exists"] = True
-        return body
+        return cap_json_bytes(body)
 
     def day_recap(
-        self, day: str | None = None, *, detail: RecapDetail | str = "summary"
+        self, day: str | None = None, *, detail: RecapDetail | str = "coarse"
     ) -> dict[str, Any]:
-        """Day recap JSON. Default summary == care_brief; segments opt-in."""
-        level = detail if detail in {"summary", "segments", "debug"} else "summary"
-        if level == "summary":
-            return self.care_brief(day)
+        """Compiled day recap JSON. Default is coarse recap, not care_brief."""
+        level = detail if detail in {"coarse", "summary", "segments", "debug"} else "coarse"
         if not self.db_path.is_file():
             return {"db_exists": False, "day": day, "error": "db_missing"}
         try:

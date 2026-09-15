@@ -60,9 +60,9 @@ def build_mcp_server(cfg: SenseConfig):
         return q.care_brief(day)
 
     @mcp.tool()
-    def day_recap(day: str | None = None, detail: str = "summary") -> dict[str, Any]:
-        """Day recap. Default summary (= care_brief). titles only debug+config full."""
-        return q.day_recap(day, detail=detail)
+    def day_recap(day: str | None = None) -> dict[str, Any]:
+        """Coarse day recap. Heartbeat uses care_brief. No detail=segments."""
+        return q.day_recap(day)
 
     @mcp.tool()
     def top_apps(day: str | None = None, limit: int = 20) -> dict[str, Any]:
@@ -150,8 +150,8 @@ def tool_catalog() -> list[dict[str, str]]:
         },
         {
             "name": "day_recap",
-            "http": "GET /v1/recap?day=&detail=",
-            "returns": "summary (default) or segments recap",
+            "http": "GET /v1/recap?day=",
+            "returns": "coarse day recap (not care_brief; no segments arg)",
         },
         {
             "name": "top_apps",

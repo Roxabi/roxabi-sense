@@ -73,6 +73,35 @@ def test_redact_strips_titles() -> None:
     assert out == {"app": "x", "nested": {"ok": 1}}
 
 
+def test_redact_coarse_strips_positional_titles() -> None:
+    secret = "SECRET-MEET-TITLE"
+    out = _redact_obj(
+        {
+            "top_titles": [(secret, 12.0, "Google Chrome")],
+            "nested": [[secret, 3, "slack"]],
+            "top_apps": [{"app": "chrome", "seconds": 1.0}],
+        }
+    )
+    blob = str(out)
+    assert secret not in blob
+    assert out["top_titles"][0][1] == 12.0
+    assert out["top_titles"][0][2] == "Google Chrome"
+    assert out["nested"][0][2] == "slack"
+    assert out["top_apps"][0]["seconds"] == 1.0
+
+
+def test_cap_json_bytes_sets_truncated() -> None:
+    from roxabi_sense.report.event_summary import cap_json_bytes
+
+    fat = {
+        "top_apps": [{"app": "x" * 80, "minutes": 1} for _ in range(40)],
+        "signals": ["sig"] * 40,
+    }
+    out = cap_json_bytes(fat, max_bytes=256)
+    assert out["truncated"] is True
+    assert len(json.dumps(out).encode()) <= 256
+
+
 def test_from_config_mcp_detail(tmp_path: Path) -> None:
     cfg = SenseConfig(db_path=tmp_path / "s.db", mcp_detail="full")
     q = SenseQuery.from_config(cfg)
@@ -140,10 +169,12 @@ def test_day_recap_coarse_strips_titles_and_media(tmp_path: Path) -> None:
     db = tmp_path / "s.db"
     secret = "SECRET-MEET-TITLE"
     with Store(db) as store:
-        store.append(
-            "focus",
-            {"app": "Google Chrome", "title": secret, "active": True},
-        )
+        for i, app in enumerate(("Google Chrome", "ghostty", "slack", "Google Chrome", "ghostty")):
+            store.append(
+                "focus",
+                {"app": app, "title": secret, "active": True, "pid": 11 + i},
+                ts=f"2026-08-01T12:{i:02d}:00Z",
+            )
         store.append(
             "media_snapshot",
             {
@@ -156,20 +187,22 @@ def test_day_recap_coarse_strips_titles_and_media(tmp_path: Path) -> None:
                     }
                 ]
             },
+            ts="2026-08-01T12:05:00Z",
         )
         store.set_meta("last_tick", "2026-08-01T12:00:00Z")
     q = SenseQuery(db_path=db, offline_threshold_s=120, idle_threshold_s=300, detail="coarse")
-    body = q.day_recap(detail="segments")
+    body = q.day_recap("2026-08-01")
     blob = str(body)
     assert secret not in blob
     assert "SECRET-SONG" not in blob
     assert body.get("top_titles") == []
     assert body.get("media") == []
+    assert body.get("focus_segments")
     # ADR-004 sessions: label/call_id are title-derived — coarse must strip
     for sess in body.get("meeting_sessions") or []:
         assert "label" not in sess
         assert "call_id" not in sess
-    for seg in body.get("focus_segments") or []:
+    for seg in body["focus_segments"]:
         assert "title" not in seg
         assert "pid" not in seg
         assert "cwd" not in seg
@@ -233,17 +266,21 @@ def test_care_brief_small_and_private(tmp_path: Path) -> None:
     assert "shape" in body
     assert "signals" in body
     default = q.day_recap("2026-08-01")
-    assert "focus_segments" not in default
+    assert default is not body
+    assert "session_shape" in default
+    assert "focus_segments" in default
+    assert default["top_apps"]
+    assert "seconds" in default["top_apps"][0]
+    assert "shape" not in default
     segs = q.day_recap("2026-08-01", detail="segments")
-    assert "focus_segments" in segs
+    assert segs.get("focus_segments")
     assert segs.get("top_titles") == []
-    assert segs["focus_segments"]
     for seg in segs["focus_segments"]:
         assert "title" not in seg
         assert "pid" not in seg
         assert "cwd" not in seg
         assert "agent_pid" not in seg
-    assert len(json.dumps(default).encode()) < 8192
+    assert len(json.dumps(body).encode()) < 8192
     assert len(json.dumps(segs).encode()) > 8192
 
 

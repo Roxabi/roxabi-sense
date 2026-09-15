@@ -42,7 +42,7 @@ which sense && sense doctor
 | `active_now` | “What am I doing right now?” — presence + focus + agents + `annotations.meeting` |
 | `what_was_i_doing` | Day timeline summaries (`day` = `YYYY-MM-DD`, optional `limit`) |
 | `agent_sessions` | Claude/Grok sessions for a day |
-| `day_recap` | Opt-in timeline (`detail=segments`). Default `summary` aliases `care_brief`. |
+| `day_recap` | Coarse recap (`session_shape`, `top_apps` seconds). Heartbeat uses `care_brief`. MCP has no `detail=segments`. |
 | `top_apps` | Ranked app minutes (no titles) |
 
 Default redaction is **coarse** (no window titles / media / full paths). Full detail is operator config only (`[mcp] detail = "full"`) — do not ask tools to escalate.

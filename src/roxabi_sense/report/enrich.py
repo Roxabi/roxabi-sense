@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from roxabi_sense.report.event_summary import cap_json_bytes
 from roxabi_sense.store import Event
 from roxabi_sense.util.time import parse_ts
 
@@ -190,32 +191,34 @@ def compile_care_brief(
         "degraded_reason": presence.get("degraded_reason"),
         "confidence": presence.get("confidence"),
     }
-    return {
-        "day": getattr(recap, "day", None),
-        "first_event": getattr(recap, "first_event", None),
-        "last_event": getattr(recap, "last_event", None),
-        "presence": pres,
-        "tracked_minutes": round(tracked_s / 60.0, 2),
-        "away_minutes": round(away_s / 60.0, 2),
-        "idle_events": int(getattr(recap, "idle_events", 0) or 0),
-        "top_apps": top,
-        "focus_switches": int(getattr(recap, "focus_switches", 0) or 0),
-        "longest_focus_app": longest,
-        "terminal_stays": terminal,
-        "meetings": {"minutes": round(meeting_s / 60.0, 2), "count": len(in_call)},
-        "agent_sessions": agent_body,
-        "agent_sessions_reason": agent_reason,
-        "shape": shape,
-        "signals": _brief_signals(
-            last_event=getattr(recap, "last_event", None),
-            longest=longest,
-            shape=shape,
-            in_call_n=len(in_call),
-            agent_count=None if agent_body is None else int(agent_body.get("count") or 0),
-            degraded=bool(pres["degraded"]),
-            away_minutes=away_s / 60.0,
-        ),
-    }
+    return cap_json_bytes(
+        {
+            "day": getattr(recap, "day", None),
+            "first_event": getattr(recap, "first_event", None),
+            "last_event": getattr(recap, "last_event", None),
+            "presence": pres,
+            "tracked_minutes": round(tracked_s / 60.0, 2),
+            "away_minutes": round(away_s / 60.0, 2),
+            "idle_events": int(getattr(recap, "idle_events", 0) or 0),
+            "top_apps": top,
+            "focus_switches": int(getattr(recap, "focus_switches", 0) or 0),
+            "longest_focus_app": longest,
+            "terminal_stays": terminal,
+            "meetings": {"minutes": round(meeting_s / 60.0, 2), "count": len(in_call)},
+            "agent_sessions": agent_body,
+            "agent_sessions_reason": agent_reason,
+            "shape": shape,
+            "signals": _brief_signals(
+                last_event=getattr(recap, "last_event", None),
+                longest=longest,
+                shape=shape,
+                in_call_n=len(in_call),
+                agent_count=None if agent_body is None else int(agent_body.get("count") or 0),
+                degraded=bool(pres["degraded"]),
+                away_minutes=away_s / 60.0,
+            ),
+        }
+    )
 
 
 def _agent_brief(

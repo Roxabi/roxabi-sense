@@ -78,6 +78,20 @@ _COARSE_DROP_KEYS = frozenset(
 )
 
 
+CARE_BRIEF_MAX_BYTES = 8192
+
+
+def _is_title_row(obj: list[Any] | tuple[Any, ...]) -> bool:
+    """Positional top_titles row: (title, seconds, app)."""
+    return (
+        len(obj) == 3
+        and isinstance(obj[0], str)
+        and isinstance(obj[1], (int, float))
+        and not isinstance(obj[1], bool)
+        and isinstance(obj[2], str)
+    )
+
+
 def redact_coarse(obj: Any, *, extra_drop: frozenset[str] = frozenset()) -> Any:
     """Deep redact for coarse export (titles, media, pids, absolute paths)."""
     drop = _COARSE_DROP_KEYS | extra_drop
@@ -94,11 +108,43 @@ def redact_coarse(obj: Any, *, extra_drop: frozenset[str] = frozenset()) -> Any:
                 continue
             out[k] = redact_coarse(v, extra_drop=extra_drop)
         return out
-    if isinstance(obj, list):
-        return [redact_coarse(x, extra_drop=extra_drop) for x in obj]
-    if isinstance(obj, tuple):
+    if isinstance(obj, (list, tuple)):
+        if _is_title_row(obj):
+            return ["", obj[1], obj[2]]
         return [redact_coarse(x, extra_drop=extra_drop) for x in obj]
     return obj
+
+
+def cap_json_bytes(
+    obj: dict[str, Any],
+    *,
+    max_bytes: int = CARE_BRIEF_MAX_BYTES,
+    trim_keys: tuple[str, ...] = ("top_apps", "signals"),
+) -> dict[str, Any]:
+    """Fail closed: drop extra list rows until serialized size fits."""
+
+    def nbytes(o: dict[str, Any]) -> int:
+        return len(json.dumps(o, ensure_ascii=False).encode())
+
+    if nbytes(obj) <= max_bytes:
+        return obj
+    out = dict(obj)
+    out["truncated"] = True
+    for key in trim_keys:
+        items = out.get(key)
+        if not isinstance(items, list):
+            continue
+        while items and nbytes(out) > max_bytes:
+            items.pop()
+            out[key] = items
+    for key in ("terminal_stays", "longest_focus_app", "meetings", "agent_sessions"):
+        if nbytes(out) <= max_bytes:
+            return out
+        out.pop(key, None)
+    if nbytes(out) <= max_bytes:
+        return out
+    stub = {"truncated": True, "day": obj.get("day"), "db_exists": obj.get("db_exists")}
+    return stub if nbytes(stub) <= max_bytes else {"truncated": True}
 
 
 def _basename_path(path: str) -> str:

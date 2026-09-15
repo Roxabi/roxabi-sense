@@ -117,9 +117,11 @@ def test_day_recap_includes_top_apps(tmp_path: Path) -> None:
     assert "minutes" in body["apps"][0]
     # coarse: no titles in this endpoint
     assert "title" not in body["apps"][0]
-    recap = q.day_recap("2026-07-30", detail="segments")
+    recap = q.day_recap("2026-07-30")
     assert "top_apps" in recap
     assert "session_shape" in recap
-    brief = q.day_recap("2026-07-30")
+    assert recap["top_apps"]
+    assert "seconds" in recap["top_apps"][0]
+    brief = q.care_brief("2026-07-30")
     assert "shape" in brief
     assert "session_shape" not in brief
