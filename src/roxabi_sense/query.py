@@ -17,7 +17,8 @@ from roxabi_sense.report import (
     summarize_event,
 )
 from roxabi_sense.report.enrich import compile_care_brief
-from roxabi_sense.report.event_summary import cap_json_bytes, redact_coarse as _redact_obj
+from roxabi_sense.report.event_summary import cap_json_bytes
+from roxabi_sense.report.event_summary import redact_coarse as _redact_obj
 from roxabi_sense.report.presence import presence_from_store
 from roxabi_sense.store import DEFAULT_DAY_LIMIT, Store, clamp_event_limit
 

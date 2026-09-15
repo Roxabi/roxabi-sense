@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -52,8 +53,8 @@ def test_care_brief_schema_lists_db_exists(tmp_path: Path) -> None:
     cfg = SenseConfig(db_path=tmp_path / "s.db")
     server = build_mcp_server(cfg)
     contents = asyncio.run(server.read_resource("sense://care-brief/schema"))
-    raw = next(iter(contents)).content
-    schema = json.loads(raw)
+    first: Any = next(iter(contents))
+    schema = json.loads(first.content)
     assert "db_exists" in schema["fields"]
 
 
