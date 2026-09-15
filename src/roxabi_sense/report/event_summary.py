@@ -24,6 +24,14 @@ def summarize_event(kind: str, payload: dict[str, Any]) -> str:
             if isinstance(p, dict)
         ]
         return f"n={payload.get('count')} " + "; ".join(bits)
+    if kind == "herdr_snapshot":
+        panes = payload.get("panes") or []
+        bits = [
+            f"{p.get('agent')}@{p.get('cwd')}"
+            for p in panes[:6]
+            if isinstance(p, dict)
+        ]
+        return f"n={payload.get('count')} " + "; ".join(bits)
     if kind == "process_snapshot":
         procs = payload.get("processes") or {}
         running = [k for k, v in procs.items() if isinstance(v, dict) and v.get("running")]

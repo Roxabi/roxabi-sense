@@ -1,4 +1,4 @@
-from roxabi_sense.util.titles import normalize_title, sanitize_display
+from roxabi_sense.util.titles import normalize_title, sanitize_display, title_core
 
 
 def test_strip_thinking_spinner() -> None:
@@ -30,3 +30,16 @@ def test_sanitize_strips_escapes() -> None:
 def test_stable_plain_title() -> None:
     t = "Spark — Silex - Google Chrome - Mickael"
     assert normalize_title(t) == t
+
+
+def test_omp_pi_spinner_prefix() -> None:
+    raw = "\u03c0 ⢸ Read X"
+    assert normalize_title(raw) == "Read X"
+    assert title_core(raw) == "read x"
+
+
+def test_omp_pi_prompt_prefix() -> None:
+    raw = "π > PR foo"
+    assert normalize_title(raw) == "PR foo"
+    assert title_core(raw) == "pr foo"
+    assert title_core("π > PR foo - omp") == "pr foo"

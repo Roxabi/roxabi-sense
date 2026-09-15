@@ -12,7 +12,7 @@
 
 Screen capture + OCR is the wrong tool for “what was I doing?”.
 
-You already have timestamped work in `~/.claude` and `~/.grok`. Meetings live in Claap. What is missing is a **cheap focus spine**: which app/window was active, which agent sessions were open, whether Slack/Discord was running — without pixels, keyloggers, or a 174 MB trial for 40 seconds of frames.
+You already have timestamped work in `~/.claude` / `~/.grok`, plus live Herdr/OMP panes (tmux still supported). Meetings live in Claap. What is missing is a **cheap focus spine**: which app/window was active, which agent sessions were open, whether Slack/Discord was running — without pixels, keyloggers, or a 174 MB trial for 40 seconds of frames.
 
 `roxabi-sense` is that spine. It publishes **facts**, not policy.
 
@@ -24,7 +24,7 @@ You already have timestamped work in `~/.claude` and `~/.grok`. Meetings live in
 |---|---|
 | Local user-session daemon (systemd `--user`) | Factory hub module |
 | CLI + optional MCP + optional NATS publisher | Screen OCR / continuous screenshots |
-| Reads existing Claude/Grok session artifacts | Re-logs AI conversations |
+| Reads Claude/Grok files + live Herdr/OMP (tmux still ok) | Re-logs AI conversations |
 | Focus / idle / process presence | Meeting recorder (→ Claap) |
 | Edge sensor for Sentinelle later | Sentinelle decision brain (→ factory hub) |
 
@@ -35,9 +35,11 @@ You already have timestamped work in `~/.claude` and `~/.grok`. Meetings live in
 ```
   collectors (facts only)
   ┌─────────────┐  ┌──────────────┐  ┌────────────────┐
-  │ focus/idle  │  │ agent sessions│  │ process presence│
+  │ focus/idle  │  │ agent + mux  │  │ process presence│
   │ (Wayland /  │  │ ~/.claude    │  │ slack/discord  │
-  │  AT-SPI)    │  │ ~/.grok      │  │ (running?)     │
+  │  AT-SPI)    │  │ ~/.grok      │  │ herdr/omp/tmux │
+  │             │  │ herdr/OMP    │  │ (running?)     │
+  │             │  │ tmux panes   │  │                │
   └──────┬──────┘  └──────┬───────┘  └───────┬────────┘
          │                │                   │
          └────────────────┼───────────────────┘
@@ -273,12 +275,14 @@ Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. Fa
 - Meta focus: `focus_backend`, `focus_status`, `session_type`, `desktop_family`, `last_focus_path`.
 - Meta idle: `idle_backend`, `idle_status`, `idle_chain_reason` (wayland → logind → noop).
 
-### Agent sessions (Grok / Claude / optional Cursor)
+### Agent sessions (Grok / Claude / Herdr·OMP / optional Cursor)
 
 | Source | Default | Paths (read-only) |
 |--------|---------|-------------------|
 | Grok | on (`agent_sessions`) | `~/.grok/active_sessions.json` |
 | Claude | on (`agent_sessions`) | `~/.claude/sessions/*.json` |
+| Herdr / OMP | on (`herdr`) | live `herdr agent list` (cwd, status, session_id; no titles, no jsonl) |
+| tmux | on (`tmux`) | `tmux_snapshot` panes (grok/claude/omp still match) |
 | Cursor | **off** (`cursor_sessions = true`) | `~/.config/Cursor/User/workspaceStorage/*/workspace.json` |
 
 Cursor opt-in emits `agent_sessions_snapshot` with `agent=cursor` (workspace id + folder path + mtime only). **Never** opens chat DBs (`state.vscdb`), composer history, or rewrites agent dirs.
@@ -305,7 +309,7 @@ Out of scope forever (for this repo): OCR, continuous screenshots, keylogging, c
 | [`roxabi-factory`](https://github.com/Roxabi/roxabi-factory) | Future **consumer** (Sentinelle hub module). Not the home of collectors. ADR-091 `factory-host-sensor` role lives *here* as an edge process. |
 | [`roxabi-cortex`](https://github.com/Roxabi/roxabi-cortex) | Downstream memory/insight may *ingest* sense observations later. Sense stays capture + query, not the entity graph. |
 | Claap | Meetings — do not duplicate |
-| `~/.claude` / `~/.grok` | Read-only sources for agent presence |
+| `~/.claude` / `~/.grok` / `~/.omp` | Read-only sources for agent presence (Herdr live list; never rewrite) |
 
 ---
 

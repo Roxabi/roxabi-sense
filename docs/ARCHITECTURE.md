@@ -13,7 +13,7 @@
  └──────────────────────────┘           └───────────┬─────────────┘
         ▲                                           │
         │ read                                      ▼
- ~/.claude  ~/.grok                         factory-discord
+ ~/.claude ~/.grok ~/.omp                   factory-discord
    (never rewrite)                          #sentinelle (future)
 ```
 
@@ -129,10 +129,11 @@ stay on the workstation. Local stdio MCP remains for offline / workstation agent
 
 ## Collectors priority
 
-1. **Agent sessions** — parse `~/.grok/active_sessions.json`, session dirs, `~/.claude/history.jsonl` / project JSONL mtimes (read-only). Highest ROI, zero OS integration pain.  
+1. **Agent sessions** — grok/claude on-disk registries (read-only). Merge live Herdr `agent list` for OMP cwd/status/`session_id` (id = path stem of `agent_session.value`). Do not parse OMP jsonl. Highest ROI.  
 2. **Idle** — Wayland `ext-idle-notify` (primary on Cosmic); logind secondary; see ADR-002.  
 3. **Focus** — `FocusProbe` protocol under `collectors/focus/` (AT-SPI agent, x11 xprop, noop; wlr/kde P1). Selection from session env; daemon demotes when AT-SPI dies.  
 4. **Process presence** — `pgrep`-class checks for configured app names.  
+5. **Mux** — `tmux_snapshot` (tmux panes) **and** `herdr_snapshot` (live Herdr/OMP agents: pane_id, cwd, agent, status, focused, session_id — no titles). Ghostty→Herdr→OMP is the live stack; tmux+grok still works.  
 
 Focus failure must not block agent-session collection.
 

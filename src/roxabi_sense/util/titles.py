@@ -1,9 +1,16 @@
-"""Window title normalization (strip Grok spinner / Thinking noise + C0)."""
+"""Window title normalization (strip Grok/OMP spinner / Thinking noise + C0)."""
 
 from __future__ import annotations
 
 import re
 
+# OMP/Herdr: leading π plus optional spinner and prompt (π ⢸ Read / π > PR).
+_OMP_PREFIX = re.compile(
+    r"^\u03c0\s*"
+    r"(?:[\u2800-\u28FF]+|[◐◓◑◒⣾⣽⣻⢿⡿⣟⣯⣷⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠁⠂⠄]+)?"
+    r"\s*"
+    r"(?:>\s*)?"
+)
 # Braille / spinner block often used by Grok TUI in Ghostty titles.
 _SPINNER_PREFIX = re.compile(
     r"^(?:"
@@ -44,7 +51,8 @@ def normalize_title(title: str) -> str:
     """
     t = sanitize_display((title or "").strip())
     for _ in range(4):
-        nxt = _SPINNER_PREFIX.sub("", t)
+        nxt = _OMP_PREFIX.sub("", t)
+        nxt = _SPINNER_PREFIX.sub("", nxt)
         nxt = _STATUS_PREFIX.sub("", nxt)
         nxt = _STATUS_INLINE.sub("", nxt)
         nxt = nxt.lstrip(" -")
@@ -61,7 +69,7 @@ _PANE_TITLE_MIN = 12
 def title_core(title: str) -> str:
     """Lowercase normalized title without trailing agent suffix (for pane match)."""
     t = normalize_title(title or "").lower().strip()
-    for suf in (" - grok", " - claude"):
+    for suf in (" - grok", " - claude", " - omp"):
         if t.endswith(suf):
             t = t[: -len(suf)].strip()
             break

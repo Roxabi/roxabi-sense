@@ -39,7 +39,7 @@ def test_fake_probe_writes_source(tmp_path: Path, monkeypatch) -> None:
         lambda: {},
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus.collector.list_tmux_agent_panes",
+        "roxabi_sense.collectors.focus.collector.list_mux_agent_panes",
         lambda: [],
     )
     probe = _FakeProbe(

@@ -66,6 +66,7 @@ def test_config_off_by_default_no_cursor_in_poll() -> None:
         idle=False,
         mpris=False,
         tmux=False,
+        herdr=False,
     )
     assert cfg.cursor_sessions is False
     cols = build_poll_collectors(cfg, logind_idle=False)
@@ -79,6 +80,7 @@ def test_config_enable_registers_collector(tmp_path: Path) -> None:
         idle=False,
         mpris=False,
         tmux=False,
+        herdr=False,
         cursor_sessions=True,
         cursor_root=tmp_path / "Cursor",
     )

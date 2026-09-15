@@ -8,6 +8,7 @@ from typing import Any
 from roxabi_sense.collectors import (
     AgentSessionsCollector,
     FocusAtspiCollector,
+    HerdrSessionsCollector,
     IdleCollector,
     MprisCollector,
     ProcessPresenceCollector,
@@ -104,6 +105,8 @@ def build_poll_collectors(
         collectors.append(MprisCollector())
     if cfg.tmux:
         collectors.append(TmuxSessionsCollector())
+    if cfg.herdr:
+        collectors.append(HerdrSessionsCollector())
     return collectors
 
 
