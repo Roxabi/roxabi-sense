@@ -39,6 +39,7 @@ def test_collect_once_writes_meta(tmp_path: Path, monkeypatch) -> None:
         idle=False,
         mpris=False,
         tmux=False,
+        herdr=False,
         focus=False,
     )
     # no collectors → 0 events but last_tick still set via empty tick_all
@@ -57,6 +58,7 @@ def test_build_collectors_flags() -> None:
         idle=False,
         mpris=False,
         tmux=False,
+        herdr=False,
         focus=False,
     )
     cols = build_collectors(cfg)
@@ -71,6 +73,7 @@ def test_poll_collectors_exclude_focus() -> None:
         idle=False,
         mpris=False,
         tmux=False,
+        herdr=False,
         focus=True,
     )
     poll = build_poll_collectors(cfg)

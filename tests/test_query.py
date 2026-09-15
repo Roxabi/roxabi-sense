@@ -69,7 +69,16 @@ def test_active_now_and_timeline(tmp_path: Path) -> None:
 
 
 def test_redact_strips_titles() -> None:
-    out = _redact_obj({"app": "x", "title": "secret", "nested": {"title_raw": "y", "ok": 1}})
+    out = _redact_obj(
+        {
+            "app": "x",
+            "title": "secret",
+            "pane_title": "p",
+            "terminal_title": "t",
+            "terminal_title_stripped": "s",
+            "nested": {"title_raw": "y", "ok": 1},
+        }
+    )
     assert out == {"app": "x", "nested": {"ok": 1}}
 
 

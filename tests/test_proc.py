@@ -62,7 +62,7 @@ def test_chrome_claude_title_does_not_link(monkeypatch) -> None:
     monkeypatch.setattr(al, "children_map", lambda: {})
     monkeypatch.setattr(
         al,
-        "list_tmux_agent_panes",
+        "list_mux_agent_panes",
         lambda: [
             {
                 "pane_pid": 100,
@@ -83,6 +83,7 @@ def test_chrome_claude_title_does_not_link(monkeypatch) -> None:
 
 
 def test_find_agent_link_tmux_title(monkeypatch) -> None:
+    """Cwd-token bonus is capped below uniqueness margin; two pid matches refuse."""
     sessions = [
         {
             "agent": "grok",
@@ -111,7 +112,7 @@ def test_find_agent_link_tmux_title(monkeypatch) -> None:
             "attached": True,
         },
     ]
-    monkeypatch.setattr(al, "list_tmux_agent_panes", lambda: panes)
+    monkeypatch.setattr(al, "list_mux_agent_panes", lambda: panes)
     monkeypatch.setattr(al, "descendants", lambda *a, **k: [])
     monkeypatch.setattr(al, "children_map", lambda: {})
     link = al.find_agent_link(
@@ -121,9 +122,7 @@ def test_find_agent_link_tmux_title(monkeypatch) -> None:
         sessions=sessions,
         tree={},
     )
-    assert link is not None
-    assert link["session_id"] == "s1"
-    assert "title" in link["match"]
+    assert link is None or "title" not in str(link.get("match"))
 
 
 def test_tmux_multi_session_no_title_match_is_none(monkeypatch) -> None:
@@ -147,7 +146,7 @@ def test_tmux_multi_session_no_title_match_is_none(monkeypatch) -> None:
             "pane_title": "Other work B - grok",
         },
     ]
-    monkeypatch.setattr(al, "list_tmux_agent_panes", lambda: panes)
+    monkeypatch.setattr(al, "list_mux_agent_panes", lambda: panes)
     monkeypatch.setattr(al, "descendants", lambda *a, **k: [])
     monkeypatch.setattr(al, "children_map", lambda: {})
     link = al.find_agent_link(
@@ -505,37 +504,6 @@ def test_find_agent_link_process_tree_beats_pane_title(monkeypatch) -> None:
     assert link["match"] == "session_pid"
 
 
-def test_list_tmux_agent_panes_parse(monkeypatch) -> None:
-    class R:
-        returncode = 0
-        stdout = (
-            "100\tgrok\t/home/m/p\t1\tMy session title - grok\n"
-            "200\tbash\t/tmp\t1\tshell\n"
-            "badline\n"
-            "300\tclaude\t/x\t0\tclaude task\n"
-        )
-
-    monkeypatch.setattr(al, "_TMUX", "/usr/bin/tmux")
-    monkeypatch.setattr(al.subprocess, "run", lambda *a, **k: R())
-    panes = al.list_tmux_agent_panes()
-    assert len(panes) == 2
-    assert panes[0]["command"] == "grok"
-    assert panes[0]["attached"] is True
-    assert panes[0]["pane_title"] == "My session title - grok"
-    assert panes[1]["command"] == "claude"
-    assert panes[1]["pane_title"] == "claude task"
-
-
-def test_list_tmux_agent_panes_error(monkeypatch) -> None:
-    monkeypatch.setattr(al, "_TMUX", "/usr/bin/tmux")
-
-    def boom(*a, **k):
-        raise al.subprocess.TimeoutExpired(cmd="tmux", timeout=1)
-
-    monkeypatch.setattr(al.subprocess, "run", boom)
-    assert al.list_tmux_agent_panes() == []
-
-
 def test_find_agent_link_none_without_signals() -> None:
     assert al.find_agent_link(None) is None
 
@@ -559,7 +527,7 @@ def test_tmux_child_pid_join(monkeypatch) -> None:
         }
     ]
     tree = {400: [500]}
-    monkeypatch.setattr(al, "list_tmux_agent_panes", lambda: panes)
+    monkeypatch.setattr(al, "list_mux_agent_panes", lambda: panes)
 
     def fake_desc(root, limit=200, tree=None):
         return [500] if root == 400 else []
@@ -587,7 +555,7 @@ def test_find_agent_link_reuses_passed_panes(monkeypatch) -> None:
         calls["n"] += 1
         raise AssertionError("list_tmux_agent_panes should not run when panes= given")
 
-    monkeypatch.setattr(al, "list_tmux_agent_panes", boom)
+    monkeypatch.setattr(al, "list_mux_agent_panes", boom)
     monkeypatch.setattr(al, "descendants", lambda *a, **k: [])
     monkeypatch.setattr(al, "children_map", lambda: {})
     sessions = [

@@ -5,6 +5,7 @@ from roxabi_sense.collectors.cursor_sessions import CursorSessionsCollector
 from roxabi_sense.collectors.focus import FocusAtspiCollector, FocusCollector
 from roxabi_sense.collectors.idle import IdleCollector
 from roxabi_sense.collectors.mpris import MprisCollector
+from roxabi_sense.collectors.mux import HerdrSessionsCollector
 from roxabi_sense.collectors.process_presence import ProcessPresenceCollector
 from roxabi_sense.collectors.tmux_sessions import TmuxSessionsCollector
 
@@ -15,6 +16,7 @@ __all__ = [
     "CursorSessionsCollector",
     "FocusAtspiCollector",
     "FocusCollector",
+    "HerdrSessionsCollector",
     "IdleCollector",
     "MprisCollector",
     "ProcessPresenceCollector",

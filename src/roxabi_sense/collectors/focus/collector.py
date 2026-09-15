@@ -10,7 +10,8 @@ from typing import Any, Literal
 from roxabi_sense.collectors.focus.probes.atspi import AtspiFocusProbe
 from roxabi_sense.collectors.focus.protocol import FocusProbe, FocusWindow, raw_dicts_to_windows
 from roxabi_sense.store import Store
-from roxabi_sense.util.agent_link import find_agent_link, list_tmux_agent_panes
+from roxabi_sense.util.agent_link import find_agent_link
+from roxabi_sense.util.mux import list_mux_agent_panes
 from roxabi_sense.util.proc import children_map, resolve_app_name
 from roxabi_sense.util.session_registry import load_all_sessions
 from roxabi_sense.util.titles import normalize_title, sanitize_display
@@ -186,7 +187,7 @@ class FocusCollector:
     def _enrich(self, windows: list[FocusWindow], *, focus_only: bool) -> list[FocusWindow]:
         sessions = self._sessions_loader()
         tree = children_map()
-        panes = list_tmux_agent_panes()
+        panes = list_mux_agent_panes()
         out: list[FocusWindow] = []
         for w in windows:
             if focus_only and not w.active:

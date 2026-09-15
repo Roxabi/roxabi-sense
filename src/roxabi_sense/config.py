@@ -24,6 +24,8 @@ DEFAULT_PROCESS_NAMES = (
     "tmux",
     "grok",
     "claude",
+    "herdr",
+    "omp",
 )
 
 NameEventsMode = Literal["off", "throttled", "on"]
@@ -56,6 +58,7 @@ class SenseConfig:
     idle_threshold_s: float = 300.0
     mpris: bool = True
     tmux: bool = True
+    herdr: bool = True
     focus: bool = True
     # Opt-in RO Cursor workspace discovery (#49) — off by default
     cursor_sessions: bool = False
@@ -134,6 +137,7 @@ def _apply_toml(cfg: SenseConfig, data: dict) -> None:
         "idle",
         "mpris",
         "tmux",
+        "herdr",
         "focus",
         "cursor_sessions",
     ):

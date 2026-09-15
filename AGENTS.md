@@ -52,7 +52,7 @@ Canonical greps:
 
 1. **Facts only** in collectors — no Discord dispatch, no jobs, no Sentinelle policy.
 2. **No OCR / screenshots / keylogging** as product direction.
-3. Read `~/.claude`, `~/.grok`, and opt-in Cursor paths **read-only** — never rewrite agent histories or open chat DBs.
+3. Read `~/.claude`, `~/.grok`, `~/.omp`, and opt-in Cursor paths **read-only** — never rewrite agent histories or open chat DBs.
 4. **NATS payloads stay coarse** (`activity` / `stale`) — no title firehose by default.
 5. **Surfaces query store/report** — do not reimplement collection or timeline per surface.
 6. **Focus / Wayland behind an interface** — failure must not block agent-session collection.
@@ -63,7 +63,7 @@ Canonical greps:
 | Area | State |
 |------|--------|
 | Store (SQLite WAL) + CLI `status` / `day` / `recap` | **done** |
-| Collectors: agent sessions (+ opt-in Cursor), idle, focus probes, process, mpris, tmux | **done** |
+| Collectors: agent sessions (+ opt-in Cursor), idle, focus probes, process, mpris, tmux + herdr mux | **done** |
 | Daemon + systemd `--user` install | **done** |
 | Report layer (presence, day recap, meeting sessions ADR-004) | **done** |
 | MCP surface | **done** stdio (`sense mcp`) — heartbeat **`care_brief`** (¬`day_recap`) |
@@ -107,11 +107,12 @@ Schema / sync: `docs/architecture/adr/003-schema-version-and-sync.md` (`meta.sch
 
 ```
 src/roxabi_sense/
-  collectors/   # primary axis — one signal source per module
+  collectors/      # primary axis — one signal source per module
+    mux/           # herdr snapshot (tmux stays tmux_sessions.py)
   store/        # append + query (SSOT facts)
   report/       # status_snapshot, summarize_event, care_brief, day recap, presence
   atspi/        # focus probe worker (system Python + gi)
-  util/         # pure helpers (time, titles, proc, session registry)
+  util/         # pure helpers (time, titles, proc, mux, session registry)
   query.py      # transport-agnostic JSON (`care_brief` + recap for MCP/HTTP/CF)
   surfaces/     # CLI · MCP stdio · (NATS later) — adapters only
   cli.py        # re-export surfaces.cli:main (script entry)

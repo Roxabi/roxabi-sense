@@ -31,7 +31,7 @@ def _patch_enrich(monkeypatch) -> None:
         lambda: {},
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus.collector.list_tmux_agent_panes",
+        "roxabi_sense.collectors.focus.collector.list_mux_agent_panes",
         lambda: [],
     )
 
@@ -96,7 +96,7 @@ def test_tick_focus_skips_desktop_snapshot(tmp_path: Path, monkeypatch) -> None:
         lambda: {},
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus.collector.list_tmux_agent_panes",
+        "roxabi_sense.collectors.focus.collector.list_mux_agent_panes",
         lambda: [],
     )
     store = Store(tmp_path / "s.db")
@@ -144,7 +144,7 @@ def test_enrich_lists_tmux_once_for_many_windows(tmp_path: Path, monkeypatch) ->
         lambda: {},
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus.collector.list_tmux_agent_panes",
+        "roxabi_sense.collectors.focus.collector.list_mux_agent_panes",
         fake_tmux,
     )
     store = Store(tmp_path / "s.db")
@@ -271,7 +271,7 @@ def test_agent_attach_updates_focus_key(tmp_path: Path, monkeypatch) -> None:
         lambda: {},
     )
     monkeypatch.setattr(
-        "roxabi_sense.collectors.focus.collector.list_tmux_agent_panes",
+        "roxabi_sense.collectors.focus.collector.list_mux_agent_panes",
         lambda: [],
     )
     store = Store(tmp_path / "s.db")
@@ -289,7 +289,6 @@ def test_agent_attach_updates_focus_key(tmp_path: Path, monkeypatch) -> None:
     assert focus is not None
     assert focus.payload["agent"]["session_id"] == "new"
     store.close()
-
 
 def test_desktop_only_change_no_new_focus(tmp_path: Path, monkeypatch) -> None:
     state = {"bg_title": "chan-a"}
