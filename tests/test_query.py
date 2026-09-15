@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.query import SenseQuery, _redact_obj
 from roxabi_sense.store import Store
+from roxabi_sense.util.time import utc_now_z
 
 
 def test_sense_status_missing_db(tmp_path: Path) -> None:
@@ -93,8 +95,7 @@ def test_active_now_meeting_annotation_in_call(tmp_path: Path) -> None:
                     {
                         "app": "Google Chrome",
                         "title": (
-                            "Meet – abc-defg-hij - Camera and microphone recording "
-                            "- Google Chrome"
+                            "Meet – abc-defg-hij - Camera and microphone recording - Google Chrome"
                         ),
                         "active": True,
                     },
@@ -158,7 +159,7 @@ def test_day_recap_coarse_strips_titles_and_media(tmp_path: Path) -> None:
         )
         store.set_meta("last_tick", "2026-08-01T12:00:00Z")
     q = SenseQuery(db_path=db, offline_threshold_s=120, idle_threshold_s=300, detail="coarse")
-    body = q.day_recap()
+    body = q.day_recap(detail="segments")
     blob = str(body)
     assert secret not in blob
     assert "SECRET-SONG" not in blob
@@ -168,6 +169,11 @@ def test_day_recap_coarse_strips_titles_and_media(tmp_path: Path) -> None:
     for sess in body.get("meeting_sessions") or []:
         assert "label" not in sess
         assert "call_id" not in sess
+    for seg in body.get("focus_segments") or []:
+        assert "title" not in seg
+        assert "pid" not in seg
+        assert "cwd" not in seg
+        assert "agent_pid" not in seg
 
 
 def test_invalid_day_stable_error(tmp_path: Path) -> None:
@@ -177,3 +183,89 @@ def test_invalid_day_stable_error(tmp_path: Path) -> None:
     out = q.what_was_i_doing(day="not-a-date")
     assert out["error"] == "invalid_day"
 
+
+def _nested_keys(obj: object) -> set[str]:
+    if isinstance(obj, dict):
+        keys = set(obj)
+        for v in obj.values():
+            keys |= _nested_keys(v)
+        return keys
+    if isinstance(obj, list):
+        keys: set[str] = set()
+        for x in obj:
+            keys |= _nested_keys(x)
+        return keys
+    return set()
+
+
+def test_care_brief_small_and_private(tmp_path: Path) -> None:
+    db = tmp_path / "s.db"
+    secret = "SECRET-WIN-TITLE"
+    with Store(db) as store:
+        store.set_meta("last_tick", "2026-08-01T18:00:00Z")
+        store.set_meta("idle_watch", "ready")
+        store.set_meta("session_bound", "1")
+        for i in range(120):
+            minute = i % 60
+            hour = 12 + i // 60
+            store.append(
+                "focus",
+                {
+                    "app": "ghostty" if i % 2 == 0 else "slack",
+                    "title": secret,
+                    "pid": 100 + i,
+                    "active": True,
+                },
+                ts=f"2026-08-01T{hour:02d}:{minute:02d}:00Z",
+            )
+    q = SenseQuery(db_path=db, offline_threshold_s=120, idle_threshold_s=300)
+    body = q.care_brief("2026-08-01")
+    blob = json.dumps(body)
+    assert len(blob.encode()) < 8192
+    assert secret not in blob
+    keys = _nested_keys(body)
+    assert "title" not in keys
+    assert "top_titles" not in keys
+    assert "focus_segments" not in keys
+    assert "attention_segments" not in keys
+    assert body.get("db_exists") is True
+    assert body["top_apps"]
+    assert "shape" in body
+    assert "signals" in body
+    default = q.day_recap("2026-08-01")
+    assert "focus_segments" not in default
+    segs = q.day_recap("2026-08-01", detail="segments")
+    assert "focus_segments" in segs
+    assert segs.get("top_titles") == []
+    assert segs["focus_segments"]
+    for seg in segs["focus_segments"]:
+        assert "title" not in seg
+        assert "pid" not in seg
+        assert "cwd" not in seg
+        assert "agent_pid" not in seg
+    assert len(json.dumps(default).encode()) < 8192
+    assert len(json.dumps(segs).encode()) > 8192
+
+
+def test_care_brief_stale_last_ok_is_null(tmp_path: Path) -> None:
+    db = tmp_path / "s.db"
+    with Store(db) as store:
+        store.set_meta("last_tick", "2026-08-01T18:00:00Z")
+        store.set_meta("idle_watch", "ready")
+        store.set_meta("session_bound", "1")
+        store.set_meta("agent_sessions_last_ok", "2026-08-01T12:00:00Z")
+        store.append(
+            "agent_sessions_snapshot",
+            {"count": 1, "sessions": [{"agent": "grok", "session_id": "1"}]},
+            ts="2026-08-01T12:00:00Z",
+        )
+    q = SenseQuery(db_path=db, offline_threshold_s=120, idle_threshold_s=300)
+    body = q.care_brief()
+    assert body.get("agent_sessions") is None
+    assert body.get("agent_sessions_reason") == "snapshot_stale"
+
+    with Store(db) as store:
+        store.set_meta("agent_sessions_last_ok", utc_now_z())
+    fresh = q.care_brief()
+    assert fresh.get("agent_sessions") == {"count": 1, "minutes": None}
+    assert fresh.get("agent_sessions_reason") is None

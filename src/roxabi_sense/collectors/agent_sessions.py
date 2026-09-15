@@ -5,13 +5,17 @@ Re-reads JSON only when mtime+size signature changes (via SessionRegistry).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from roxabi_sense.store import Store
 from roxabi_sense.util.session_registry import SessionRegistry
+from roxabi_sense.util.time import parse_ts, utc_now_z
 
 SNAPSHOT = "agent_sessions_snapshot"
+_REFRESH_S = 900.0
+_LAST_OK = "agent_sessions_last_ok"
 
 
 class AgentSessionsCollector:
@@ -40,10 +44,19 @@ class AgentSessionsCollector:
     def tick(self, store: Store) -> int:
         sessions = self._reg.load_all()
         fingerprint = self._stable_fp(sessions)
-        if fingerprint == self._last_fingerprint:
+        last = store.last_by_kind(SNAPSHOT)
+        last_ok = store.get_meta(_LAST_OK) or (last.ts if last is not None else None)
+        stored_fp = _payload_fp(last.payload if last is not None else None)
+        unchanged = fingerprint == (self._last_fingerprint or stored_fp)
+        if unchanged and not _snapshot_stale(last_ok):
+            self._last_fingerprint = fingerprint
             return 0
         self._last_fingerprint = fingerprint
+        if unchanged and last is not None:
+            store.set_meta(_LAST_OK, utc_now_z())
+            return 0
         store.append(SNAPSHOT, {"count": len(sessions), "sessions": sessions})
+        store.set_meta(_LAST_OK, utc_now_z())
         return 1
 
     @staticmethod
@@ -61,3 +74,23 @@ class AgentSessionsCollector:
                 }
             )
         return json.dumps(rows, sort_keys=True, separators=(",", ":"))
+
+
+def _payload_fp(payload: dict[str, Any] | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("sessions")
+    if not isinstance(raw, list):
+        return None
+    return AgentSessionsCollector._stable_fp([s for s in raw if isinstance(s, dict)])
+
+
+def _snapshot_stale(ts: str | None, *, now: datetime | None = None) -> bool:
+    if not ts:
+        return True
+    n = now or datetime.now(UTC)
+    try:
+        age = (n - parse_ts(ts)).total_seconds()
+    except ValueError:
+        return True
+    return age > _REFRESH_S

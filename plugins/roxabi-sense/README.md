@@ -68,6 +68,7 @@ Plugin `.mcp.json` is identical to the happy-path host snippet: `command = "sens
 - **No** second query implementation (no private SQL, no re-read of `~/.claude` / `~/.grok` from skills)
 - **No** collectors, daemon start, or policy (Discord / jobs / Sentinelle) in the plugin
 - Tools are **facts only**; default MCP redaction is coarse
+- Heartbeat / caretaker: call **`care_brief`**, not `day_recap`
 
 ## Skill
 

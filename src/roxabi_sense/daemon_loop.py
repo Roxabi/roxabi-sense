@@ -21,6 +21,7 @@ from roxabi_sense.daemon_collectors import (
     tick_all,
     want_logind_idle,
 )
+from roxabi_sense.report.presence import write_session_bound_meta
 from roxabi_sense.store import Store
 
 _IDLE_RESPAWN_BASE_S = 2.0
@@ -62,12 +63,14 @@ def run_main_loop(
         boot_cols.append(focus)
     wrote = tick_all(boot_cols, store)
     store.set_meta("last_tick", _utc_stamp())
+    write_session_bound_meta(store)
     if wrote:
         print(f"sense tick (boot): +{wrote} events (total={store.count()})", flush=True)
 
     def _on_activity() -> None:
         nonlocal last_activity_ts
         store.set_meta("last_tick", _utc_stamp())
+        write_session_bound_meta(store)
         last_activity_ts = _utc_stamp()
 
     while not stop_flag():
@@ -201,6 +204,7 @@ def run_main_loop(
                 cols.append(focus)
             wrote = tick_all(cols, store)
             store.set_meta("last_tick", _utc_stamp())
+            write_session_bound_meta(store)
             if focus is not None and focus_on_poll and wrote:
                 store.set_meta("last_focus_path", "poll")
             if wrote:

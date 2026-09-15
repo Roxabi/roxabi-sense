@@ -20,6 +20,7 @@ def test_tool_catalog_http_mapping() -> None:
         "active_now",
         "what_was_i_doing",
         "agent_sessions",
+        "care_brief",
         "day_recap",
         "top_apps",
     }
@@ -37,6 +38,17 @@ def test_build_mcp_server_registers_tools(tmp_path: Path) -> None:
         "active_now",
         "what_was_i_doing",
         "agent_sessions",
+        "care_brief",
         "day_recap",
         "top_apps",
     }
+    resources = asyncio.run(server.list_resources())
+    uris = {str(getattr(r, "uri", r)) for r in resources}
+    assert any("care-brief" in u for u in uris)
+
+
+def test_care_brief_schema_lists_db_exists() -> None:
+    src = Path(__file__).resolve().parents[1] / "src/roxabi_sense/surfaces/mcp.py"
+    blob = src.read_text(encoding="utf-8")
+    schema = blob.split("def care_brief_schema")[1].split("return mcp")[0]
+    assert '"db_exists"' in schema

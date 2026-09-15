@@ -16,26 +16,13 @@ from roxabi_sense.report import (
     load_status_snapshot,
     summarize_event,
 )
+from roxabi_sense.report.enrich import compile_care_brief
+from roxabi_sense.report.event_summary import redact_coarse as _redact_obj
+from roxabi_sense.report.presence import presence_from_store
 from roxabi_sense.store import DEFAULT_DAY_LIMIT, Store, clamp_event_limit
 
 DetailLevel = Literal["coarse", "full"]
-
-# Keys stripped (or path-redacted) under coarse detail — ADR-002 MCP redaction.
-_COARSE_DROP_KEYS = frozenset(
-    {
-        "title",
-        "title_raw",
-        "frame_name",
-        "name",
-        "artist",
-        "album",
-        "url",
-        "uri",
-        "meeting_label",  # away overlay — title-derived
-        "label",  # meeting_sessions[].label (window chrome)
-        "call_id",  # Meet room codes (ADR-004 / ADR-002 coarse)
-    }
-)
+RecapDetail = Literal["summary", "segments", "debug"]
 
 
 @dataclass(frozen=True)
@@ -211,8 +198,41 @@ class SenseQuery:
         }
         return _redact_obj(body) if self.detail == "coarse" else body
 
-    def day_recap(self, day: str | None = None) -> dict[str, Any]:
-        """Compiled day recap JSON (bonus tool; same product as CLI recap)."""
+    def care_brief(self, day: str | None = None) -> dict[str, Any]:
+        """Heartbeat day brief (tool: care_brief). No titles / segments."""
+        if not self.db_path.is_file():
+            return {"db_exists": False, "day": day, "error": "db_missing"}
+        try:
+            with Store(self.db_path) as store:
+                recap = compile_day_recap(store, day)
+                presence = presence_from_store(store)
+                snap = store.last_by_kind("agent_sessions_snapshot")
+                last_ok = store.get_meta("agent_sessions_last_ok")
+                snap_ts = last_ok or (snap.ts if snap is not None else None)
+                snap_payload = snap.payload if snap is not None else None
+        except ValueError as exc:
+            return {
+                "db_exists": True,
+                "day": day,
+                "error": "invalid_day",
+                "message": str(exc),
+            }
+        body = compile_care_brief(
+            recap,
+            presence.to_dict(),
+            agent_snapshot_ts=snap_ts,
+            agent_payload=snap_payload,
+        )
+        body["db_exists"] = True
+        return body
+
+    def day_recap(
+        self, day: str | None = None, *, detail: RecapDetail | str = "summary"
+    ) -> dict[str, Any]:
+        """Day recap JSON. Default summary == care_brief; segments opt-in."""
+        level = detail if detail in {"summary", "segments", "debug"} else "summary"
+        if level == "summary":
+            return self.care_brief(day)
         if not self.db_path.is_file():
             return {"db_exists": False, "day": day, "error": "db_missing"}
         try:
@@ -227,12 +247,11 @@ class SenseQuery:
             }
         body = recap.to_dict()
         body["db_exists"] = True
-        if self.detail == "full":
-            return body
-        # Coarse: key redaction + drop positional title/media firehoses (asdict tuples)
-        body = _redact_obj(body)
-        body["top_titles"] = []
-        body["media"] = []
+        allow_titles = level == "debug" and self.detail == "full"
+        if not allow_titles:
+            body = _redact_obj(body, extra_drop=frozenset({"cwd"}))
+            body["top_titles"] = []
+            body["media"] = []
         return body
 
     def top_apps(self, day: str | None = None, *, limit: int = 20) -> dict[str, Any]:
@@ -265,32 +284,3 @@ class SenseQuery:
             "tracked_seconds": round(sum(a.seconds for a in recap.top_apps), 1),
             "apps": apps,
         }
-
-
-def _redact_obj(obj: Any) -> Any:
-    """Deep redact for coarse export (titles, media, absolute paths)."""
-    if isinstance(obj, dict):
-        out: dict[str, Any] = {}
-        for k, v in obj.items():
-            if k in _COARSE_DROP_KEYS:
-                continue
-            if k == "cwd" and isinstance(v, str):
-                out[k] = _basename_path(v)
-                continue
-            if k == "path" and isinstance(v, str) and ("/" in v or v.startswith("~")):
-                out[k] = _basename_path(v)
-                continue
-            out[k] = _redact_obj(v)
-        return out
-    if isinstance(obj, list):
-        return [_redact_obj(x) for x in obj]
-    if isinstance(obj, tuple):
-        return [_redact_obj(x) for x in obj]
-    return obj
-
-
-def _basename_path(path: str) -> str:
-    p = path.rstrip("/")
-    if not p:
-        return path
-    return p.rsplit("/", 1)[-1]

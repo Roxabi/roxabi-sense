@@ -57,3 +57,52 @@ def summarize_event(kind: str, payload: dict[str, Any]) -> str:
         n = len(payload.get("windows") or [])
         return f"n={n} focus={focus.get('app')}: {focus.get('title')}"
     return json.dumps(payload, ensure_ascii=False)[:100]
+
+
+_COARSE_DROP_KEYS = frozenset(
+    {
+        "title",
+        "title_raw",
+        "frame_name",
+        "name",
+        "artist",
+        "album",
+        "url",
+        "uri",
+        "meeting_label",
+        "label",
+        "call_id",
+        "pid",
+        "agent_pid",
+    }
+)
+
+
+def redact_coarse(obj: Any, *, extra_drop: frozenset[str] = frozenset()) -> Any:
+    """Deep redact for coarse export (titles, media, pids, absolute paths)."""
+    drop = _COARSE_DROP_KEYS | extra_drop
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            if k in drop:
+                continue
+            if k == "cwd" and isinstance(v, str):
+                out[k] = _basename_path(v)
+                continue
+            if k == "path" and isinstance(v, str) and ("/" in v or v.startswith("~")):
+                out[k] = _basename_path(v)
+                continue
+            out[k] = redact_coarse(v, extra_drop=extra_drop)
+        return out
+    if isinstance(obj, list):
+        return [redact_coarse(x, extra_drop=extra_drop) for x in obj]
+    if isinstance(obj, tuple):
+        return [redact_coarse(x, extra_drop=extra_drop) for x in obj]
+    return obj
+
+
+def _basename_path(path: str) -> str:
+    p = path.rstrip("/")
+    if not p:
+        return path
+    return p.rsplit("/", 1)[-1]

@@ -40,13 +40,13 @@ Content for agents lives **here**. `CLAUDE.md` is only imports (same pattern as 
 | New **host** | config + machine id — same binary, no host-named package fork |
 
 **Anti-patterns (wrong axis):**
-- Query / timeline / `status` / `active_now` logic living under `surfaces/` or copied into MCP/NATS formatters
+- Query / timeline / `status` / `active_now` / `care_brief` logic living under `surfaces/` or copied into MCP/NATS formatters
 - Collectors importing `surfaces` or CLI
 - Per-host forks (`laptop/` vs `m2/` packages)
 
 Canonical greps:
 - `from roxabi_sense.surfaces` inside `collectors/`
-- `def (status|day|active_now|what_was_i_doing)` under `surfaces/` with business logic (not just format)
+- `def (status|day|active_now|what_was_i_doing|care_brief)` under `surfaces/` with business logic (not just format)
 
 ## Hard rules
 
@@ -66,7 +66,7 @@ Canonical greps:
 | Collectors: agent sessions (+ opt-in Cursor), idle, focus probes, process, mpris, tmux | **done** |
 | Daemon + systemd `--user` install | **done** |
 | Report layer (presence, day recap, meeting sessions ADR-004) | **done** |
-| MCP surface | **done** stdio (`sense mcp` · `uv sync --extra mcp`) |
+| MCP surface | **done** stdio (`sense mcp`) — heartbeat **`care_brief`** (¬`day_recap`) |
 | Query API | **done** (`query.SenseQuery` — JSON for MCP / future HTTP / CF) |
 | NATS opt-in | **not wired** (optional dep empty) |
 | Shared status / event summary | **done** (`report/status.py`, `report/event_summary.py`) |
@@ -100,6 +100,7 @@ uv run pytest && uv run ruff check && uv run pyright
 DB default: `~/.local/share/roxabi-sense/sense.db` (override `SENSE_DB`)  
 Config: `~/.config/roxabi-sense/config.toml`  
 Install matrix: README § Install matrix · Host MCP: README § MCP host registration · ARCHITECTURE MCP section  
+Heartbeat MCP: **`care_brief`** (¬`day_recap` / ¬`what_was_i_doing`)
 Schema / sync: `docs/architecture/adr/003-schema-version-and-sync.md` (`meta.schema_version`)
 
 ## Layout (query — do not invent)
@@ -108,10 +109,10 @@ Schema / sync: `docs/architecture/adr/003-schema-version-and-sync.md` (`meta.sch
 src/roxabi_sense/
   collectors/   # primary axis — one signal source per module
   store/        # append + query (SSOT facts)
-  report/       # status_snapshot, summarize_event, day recap, presence
+  report/       # status_snapshot, summarize_event, care_brief, day recap, presence
   atspi/        # focus probe worker (system Python + gi)
   util/         # pure helpers (time, titles, proc, session registry)
-  query.py      # transport-agnostic JSON read API (MCP/HTTP/CF)
+  query.py      # transport-agnostic JSON (`care_brief` + recap for MCP/HTTP/CF)
   surfaces/     # CLI · MCP stdio · (NATS later) — adapters only
   cli.py        # re-export surfaces.cli:main (script entry)
   daemon*.py    # orchestration

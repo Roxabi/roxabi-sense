@@ -23,6 +23,7 @@ from roxabi_sense.daemon_collectors import (  # noqa: F401 — re-export for tes
     want_wayland_idle,
 )
 from roxabi_sense.daemon_loop import run_main_loop
+from roxabi_sense.report.presence import write_session_bound_meta
 from roxabi_sense.store import Store
 
 
@@ -51,6 +52,7 @@ def run_daemon(cfg: SenseConfig) -> int:
     store.set_meta("idle_watch", "n/a")
     store.set_meta("atspi_agent", "n/a")
     store.set_meta("last_tick", _utc_stamp())
+    write_session_bound_meta(store)
 
     if focus_rt is not None:
         focus_rt.select_initial(store)
@@ -171,6 +173,7 @@ def collect_once(cfg: SenseConfig) -> int:
                 FocusRuntime(focus_col).select_initial(store)
         n = tick_all(collectors, store)
         store.set_meta("last_tick", _utc_stamp())
+        write_session_bound_meta(store)
         if store.get_meta("idle_watch") is None:
             store.set_meta("idle_watch", "n/a")
         return n

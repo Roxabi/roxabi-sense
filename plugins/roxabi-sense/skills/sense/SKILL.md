@@ -37,11 +37,13 @@ which sense && sense doctor
 
 | Tool | Use when |
 |------|----------|
+| `care_brief` | Heartbeat / caretaker every ~15 min — rhythm only (apps, presence, shape). **Not** `day_recap`. |
 | `sense_status` | Daemon health, presence, last collect meta |
 | `active_now` | “What am I doing right now?” — presence + focus + agents + `annotations.meeting` |
 | `what_was_i_doing` | Day timeline summaries (`day` = `YYYY-MM-DD`, optional `limit`) |
 | `agent_sessions` | Claude/Grok sessions for a day |
-| `day_recap` | Compiled recap JSON (apps, away, meetings, agents) |
+| `day_recap` | Opt-in timeline (`detail=segments`). Default `summary` aliases `care_brief`. |
+| `top_apps` | Ranked app minutes (no titles) |
 
 Default redaction is **coarse** (no window titles / media / full paths). Full detail is operator config only (`[mcp] detail = "full"`) — do not ask tools to escalate.
 
