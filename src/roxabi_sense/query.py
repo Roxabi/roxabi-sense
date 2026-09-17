@@ -16,7 +16,7 @@ from roxabi_sense.report import (
     load_status_snapshot,
     summarize_event,
 )
-from roxabi_sense.report.enrich import compile_care_brief
+from roxabi_sense.report.care import compile_care_brief
 from roxabi_sense.report.event_summary import cap_json_bytes
 from roxabi_sense.report.event_summary import redact_coarse as _redact_obj
 from roxabi_sense.report.presence import presence_from_store
