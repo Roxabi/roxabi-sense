@@ -88,6 +88,8 @@ def build_mcp_server(cfg: SenseConfig):
                     "longest_focus_app",
                     "current_stretch",
                     "last_away",
+                    "last_pause",
+                    "minutes_since_pause",
                     "terminal_stays",
                     "meetings",
                     "agent_sessions",

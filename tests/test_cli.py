@@ -94,5 +94,7 @@ def test_care_brief_cli_matches_query_keys(tmp_path: Path, monkeypatch, capsys) 
     assert body.get("db_exists") is True
     assert "current_stretch" in body
     assert "last_away" in body
+    assert "last_pause" in body
+    assert "minutes_since_pause" in body
     assert "signals" in body
     assert "title" not in json.dumps(body)

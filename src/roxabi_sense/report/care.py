@@ -1,6 +1,6 @@
 """Heartbeat care_brief — compact JSON over day recap + presence.
 
-Facts only: apps / presence / current stretch / last away. No titles, no policy.
+Facts only: apps / presence / current stretch / last pause clock. No titles, no policy.
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from roxabi_sense.report.away import IDLE_GAP_S
 from roxabi_sense.report.event_summary import cap_json_bytes
 from roxabi_sense.util.time import parse_ts
 
@@ -55,11 +56,18 @@ def compile_care_brief(
         }
     pres_state = str(presence.get("state") or "")
     current = _current_stretch(attn, now=n, presence_state=pres_state)
-    pause = _last_away(
+    last_away = _last_away(
         getattr(recap, "away_segments", []) or [],
         now=n,
         presence_state=pres_state,
         idle_since=presence.get("idle_since"),
+    )
+    last_pause, minutes_since_pause = _pause_clock(
+        getattr(recap, "away_segments", []) or [],
+        now=n,
+        presence_state=pres_state,
+        idle_since=presence.get("idle_since"),
+        first_event=getattr(recap, "first_event", None),
     )
 
     stays = getattr(recap, "terminal_stays", None)
@@ -106,7 +114,9 @@ def compile_care_brief(
             "focus_switches": int(getattr(recap, "focus_switches", 0) or 0),
             "longest_focus_app": longest,
             "current_stretch": current,
-            "last_away": pause,
+            "last_away": last_away,
+            "last_pause": last_pause,
+            "minutes_since_pause": minutes_since_pause,
             "terminal_stays": terminal,
             "meetings": {"minutes": round(meeting_s / 60.0, 2), "count": len(in_call)},
             "agent_sessions": agent_body,
@@ -115,7 +125,7 @@ def compile_care_brief(
             "signals": _brief_signals(
                 now=n,
                 current=current,
-                pause=pause,
+                pause=last_away,
                 shape=shape,
                 in_call_n=len(in_call),
                 agent_count=None if agent_body is None else int(agent_body.get("count") or 0),
@@ -171,7 +181,79 @@ def _last_away(
     return {
         "minutes": round(float(getattr(last, "duration_s", 0.0) or 0.0) / 60.0, 2),
         "ongoing": False,
+        "end": str(last.end),
     }
+
+
+def _as_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = parse_ts(str(value))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _pause_clock(
+    aways: list[Any],
+    *,
+    now: datetime,
+    presence_state: str,
+    idle_since: Any,
+    first_event: Any,
+) -> tuple[dict[str, Any] | None, float | None]:
+    """Last qualifying pause (≥ idle gap) and wall minutes since it ended.
+
+    Qualifying = idle/away of at least IDLE_GAP_S (ADR-002). Ongoing idle
+    shorter than that does not reset the clock. No recency window: a pause
+    earlier today still answers minutes_since_pause.
+    """
+    idle_start = _as_dt(idle_since) if presence_state == "idle" else None
+    if idle_start is not None:
+        idle_s = (now - idle_start).total_seconds()
+        if idle_s >= IDLE_GAP_S:
+            return (
+                {
+                    "start": str(idle_since),
+                    "end": None,
+                    "minutes": round(idle_s / 60.0, 2),
+                    "ongoing": True,
+                },
+                0.0,
+            )
+
+    qualifying: list[tuple[datetime, Any, float]] = []
+    for away in aways:
+        if getattr(away, "presence", "away") == "meeting":
+            continue
+        duration_s = float(getattr(away, "duration_s", 0.0) or 0.0)
+        if duration_s < IDLE_GAP_S:
+            continue
+        ended = _as_dt(getattr(away, "end", None))
+        if ended is None:
+            continue
+        qualifying.append((ended, away, duration_s))
+    if qualifying:
+        ended, away, duration_s = max(qualifying, key=lambda item: item[0])
+        start = getattr(away, "start", None)
+        return (
+            {
+                "start": str(start) if start else None,
+                "end": str(away.end),
+                "minutes": round(duration_s / 60.0, 2),
+                "ongoing": False,
+            },
+            round(max(0.0, (now - ended).total_seconds() / 60.0), 2),
+        )
+
+    origin = _as_dt(first_event)
+    if origin is None:
+        return None, None
+    return None, round(max(0.0, (now - origin).total_seconds() / 60.0), 2)
+
 
 
 def _agent_brief(
