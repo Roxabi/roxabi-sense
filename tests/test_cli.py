@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from roxabi_sense.cli import main
@@ -73,3 +74,27 @@ def test_bad_config_exits_2(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.setenv("SENSE_DB", str(tmp_path / "x.db"))
     assert main(["--config", str(bad), "status"]) == 2
     assert "invalid config" in capsys.readouterr().err
+
+
+def test_care_brief_missing_db(tmp_path: Path, monkeypatch, capsys) -> None:
+    missing = tmp_path / "missing.db"
+    monkeypatch.setenv("SENSE_DB", str(missing))
+    assert main(["care-brief", "--json"]) == 1
+    body = json.loads(capsys.readouterr().out)
+    assert body.get("db_exists") is False
+    assert not missing.exists()
+
+
+def test_care_brief_cli_matches_query_keys(tmp_path: Path, monkeypatch, capsys) -> None:
+    db = tmp_path / "sense.db"
+    monkeypatch.setenv("SENSE_DB", str(db))
+    Store(db).close()
+    assert main(["care-brief", "--json"]) == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body.get("db_exists") is True
+    assert "current_stretch" in body
+    assert "last_away" in body
+    assert "last_pause" in body
+    assert "minutes_since_pause" in body
+    assert "signals" in body
+    assert "title" not in json.dumps(body)

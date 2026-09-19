@@ -1,4 +1,4 @@
-"""CLI surface — argparse + print over report/store (no query ownership)."""
+"""CLI surface — argparse + dispatch; handlers in cmds."""
 
 from __future__ import annotations
 
@@ -14,14 +14,11 @@ from roxabi_sense.install_service import install_service
 from roxabi_sense.paths import default_config_path
 from roxabi_sense.report import (
     StatusSnapshot,
-    compile_day_recap,
-    format_day_recap,
-    format_day_recap_share,
     format_presence_lines,
     load_status_snapshot,
-    summarize_event,
 )
-from roxabi_sense.store import DEFAULT_DAY_LIMIT, Store, clamp_event_limit
+from roxabi_sense.store import Store
+from roxabi_sense.surfaces.cmds import cmd_care_brief, cmd_day, cmd_recap
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -69,6 +66,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Dense copy-paste card (Slack/Discord/notes)",
     )
+    p_brief = sub.add_parser("care-brief", help="Heartbeat brief (no titles)")
+    p_brief.add_argument(
+        "--date",
+        dest="day",
+        default=None,
+        help="YYYY-MM-DD (local day, default: today)",
+    )
+    p_brief.add_argument("--json", action="store_true", help="JSON object output")
 
     sub.add_parser("daemon", help="Run collectors in foreground")
     sub.add_parser("mcp", help="Run MCP stdio server (uv sync --extra mcp)")
@@ -112,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_recap(
             cfg.db_path, day=args.day, as_json=args.json, share=args.share
         )
+    if args.cmd == "care-brief":
+        return cmd_care_brief(cfg, day=args.day)
     if args.cmd == "install-service":
         code, msg = install_service()
         print(msg)
@@ -239,57 +246,6 @@ def _status_meeting_annotation(snap: StatusSnapshot) -> dict:
             "fidelity": "unknown",
             "fidelity_note": "meeting annotation unavailable",
         }
-
-
-def cmd_day(db_path: Path, *, day: str | None, as_json: bool, limit: int) -> int:
-    if not db_path.is_file():
-        print(f"db: missing ({db_path})", file=sys.stderr)
-        return 1
-    lim = clamp_event_limit(limit, default=DEFAULT_DAY_LIMIT)
-    try:
-        with Store(db_path) as store:
-            start, end = store.day_bounds(day)
-            events = store.events_for_day(day, limit=lim)
-    except ValueError as exc:
-        print(f"sense day: {exc}", file=sys.stderr)
-        return 2
-    if as_json:
-        for e in events:
-            row = {"ts": e.ts, "kind": e.kind, "payload": e.payload}
-            print(json.dumps(row, ensure_ascii=False))
-    else:
-        print(f"sense day ({day or 'today'})  {start} → {end}  n={len(events)}")
-        for e in events:
-            print(f"{e.ts}  {e.kind:24}  {summarize_event(e.kind, e.payload)}")
-        if len(events) >= lim:
-            msg = f"(capped at {lim}; use `sense recap` for a compiled day summary)"
-            print(msg, file=sys.stderr)
-    return 0
-
-
-def cmd_recap(
-    db_path: Path,
-    *,
-    day: str | None,
-    as_json: bool,
-    share: bool = False,
-) -> int:
-    if not db_path.is_file():
-        print(f"db: missing ({db_path})", file=sys.stderr)
-        return 1
-    try:
-        with Store(db_path) as store:
-            recap = compile_day_recap(store, day)
-    except ValueError as exc:
-        print(f"sense recap: {exc}", file=sys.stderr)
-        return 2
-    if as_json:
-        print(json.dumps(recap.to_dict(), ensure_ascii=False, indent=2))
-    elif share:
-        print(format_day_recap_share(recap))
-    else:
-        print(format_day_recap(recap))
-    return 0
 
 
 if __name__ == "__main__":
