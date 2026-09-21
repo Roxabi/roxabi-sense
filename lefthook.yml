@@ -1,5 +1,6 @@
-# Local fast-feedback hooks. Machine-global core.hooksPath dispatches these
-# (see ~/projects/scripts/git-hooks). Do NOT run `lefthook install` here.
+# Local fast-feedback hooks. Run `lefthook install` once per clone — the
+# machine-global core.hooksPath that used to dispatch these was retired
+# 2026-08-02, so without it git has no hook to run at all.
 pre-commit:
   commands:
     lint:
