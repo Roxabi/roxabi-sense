@@ -5,17 +5,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from roxabi_sense.report.day import (
-    compile_day_recap,
-    format_day_recap,
-    format_day_recap_share,
-)
+from roxabi_sense.report.day import compile_day_recap
+from roxabi_sense.report.dwell.stays import terminal_stay_stats
+from roxabi_sense.report.render.day import format_day_recap, format_day_recap_share
 from roxabi_sense.report.segments import (
     FocusSegment,
     attention_key,
     attention_segments,
     switch_count,
-    terminal_stay_stats,
 )
 from roxabi_sense.report.top_apps import session_shape
 from roxabi_sense.store import Store

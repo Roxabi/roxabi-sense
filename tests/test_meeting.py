@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from roxabi_sense.report.day import compile_day_recap, format_day_recap
+from roxabi_sense.report.away import AwaySegment
+from roxabi_sense.report.day import compile_day_recap
 from roxabi_sense.report.meeting import (
     MeetingHint,
     annotate_away_with_meetings,
@@ -17,7 +18,7 @@ from roxabi_sense.report.meeting_sessions import (
     meeting_sessions,
     sessions_from_samples,
 )
-from roxabi_sense.report.segments import AwaySegment
+from roxabi_sense.report.render.day import format_day_recap
 from roxabi_sense.store import Event, Store
 
 _MEET_IN_CALL = (

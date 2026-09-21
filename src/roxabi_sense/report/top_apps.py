@@ -9,7 +9,9 @@ from dataclasses import asdict, dataclass
 from statistics import median
 from typing import Any
 
-from roxabi_sense.report.segments import AwaySegment, FocusSegment, sum_by
+from roxabi_sense.report.away import AwaySegment
+from roxabi_sense.report.dwell.aggregate import sum_by
+from roxabi_sense.report.segments import FocusSegment
 
 # Minimum tracked focus before session_shape is meaningful.
 _SHAPE_MIN_TRACKED_S = 900.0  # 15 minutes

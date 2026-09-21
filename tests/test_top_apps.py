@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from roxabi_sense.query import SenseQuery
-from roxabi_sense.report.segments import AwaySegment, FocusSegment
+from roxabi_sense.report.away import AwaySegment
+from roxabi_sense.report.segments import FocusSegment
 from roxabi_sense.report.top_apps import session_shape, top_apps
 from roxabi_sense.store import Store
 

@@ -5,51 +5,22 @@ Two grains:
 - **attention** (``attention_segments``): context key (session/agent) —
   multitasking hops including short 3–5s agent checks; title thrash collapsed
 
-Complementary (not primary multitask):
-- **terminal stay stats** — how often / how long you *stay* on a terminal context
+Terminal stay stats live in ``report.dwell.stays``. Rollups live in
+``report.dwell.aggregate``.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime, timedelta
-from statistics import median
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from typing import Any
 
-from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
+from roxabi_sense.report.away import AwaySegment
 from roxabi_sense.store import Event
 from roxabi_sense.util.time import parse_ts, to_z
 from roxabi_sense.util.titles import normalize_title
 
-if TYPE_CHECKING:
-    from roxabi_sense.report.meeting_sessions import MeetingSession
-
-# Re-export for existing importers (meeting, top_apps, tests).
-__all__ = [
-    "LONG_STAY_S",
-    "AwaySegment",
-    "FocusSegment",
-    "IDLE_GAP_S",
-    "MIN_DWELL_S",
-    "TerminalStayStats",
-    "attention_key",
-    "attention_segments",
-    "away_segments",
-    "focus_segments",
-    "horizon_dt",
-    "hour_apps",
-    "is_terminal_app",
-    "norm_app",
-    "sum_by",
-    "switch_count",
-    "terminal_stay_stats",
-    "top_titles",
-]
-
 MIN_DWELL_S = 3.0  # ignore micro-focus flickers (fine title segments)
-# Complementary “I stayed a while” thresholds (not used to drop short hops).
-LONG_STAY_S = (120.0, 300.0, 600.0)  # ≥2m, ≥5m, ≥10m
 _APP_ALIASES: dict[str, str] = {
     "unnamed": "ghostty",
     "xdg-desktop-portal-gtk": "dialog",
@@ -176,72 +147,6 @@ def attention_segments(fine: list[FocusSegment]) -> list[FocusSegment]:
         meta = seg
     _flush()
     return out
-
-
-@dataclass(frozen=True)
-class TerminalStayStats:
-    """Complementary: continuous terminal-context visits (attention grain).
-
-    Answers “how often / how long do I stay on a terminal?” — not multitask hop
-    count. Short hops still appear as short visits in ``visits`` / median.
-    """
-
-    visits: int
-    median_s: float
-    mean_s: float
-    # Counts of visits meeting each threshold (a 12m visit counts in all three).
-    ge_2m: int
-    ge_5m: int
-    ge_10m: int
-    # Time spent in visits of at least that length.
-    time_ge_2m_s: float
-    time_ge_5m_s: float
-    time_ge_10m_s: float
-    time_total_s: float
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-def terminal_stay_stats(
-    attention: list[FocusSegment],
-    *,
-    thresholds_s: tuple[float, ...] = LONG_STAY_S,
-) -> TerminalStayStats:
-    """Stats over terminal attention visits only (ghostty / unnamed)."""
-    t2, t5, t10 = (
-        thresholds_s[0] if len(thresholds_s) > 0 else 120.0,
-        thresholds_s[1] if len(thresholds_s) > 1 else 300.0,
-        thresholds_s[2] if len(thresholds_s) > 2 else 600.0,
-    )
-    terms = [s for s in attention if is_terminal_app(s.app) and s.duration_s > 0]
-    if not terms:
-        return TerminalStayStats(
-            visits=0,
-            median_s=0.0,
-            mean_s=0.0,
-            ge_2m=0,
-            ge_5m=0,
-            ge_10m=0,
-            time_ge_2m_s=0.0,
-            time_ge_5m_s=0.0,
-            time_ge_10m_s=0.0,
-            time_total_s=0.0,
-        )
-    durs = [s.duration_s for s in terms]
-    total = float(sum(durs))
-    return TerminalStayStats(
-        visits=len(terms),
-        median_s=round(float(median(durs)), 1),
-        mean_s=round(total / len(durs), 1),
-        ge_2m=sum(1 for d in durs if d >= t2),
-        ge_5m=sum(1 for d in durs if d >= t5),
-        ge_10m=sum(1 for d in durs if d >= t10),
-        time_ge_2m_s=round(sum(d for d in durs if d >= t2), 1),
-        time_ge_5m_s=round(sum(d for d in durs if d >= t5), 1),
-        time_ge_10m_s=round(sum(d for d in durs if d >= t10), 1),
-        time_total_s=round(total, 1),
-    )
 
 
 def _prefer_meta(base: FocusSegment, other: FocusSegment) -> FocusSegment:
@@ -373,54 +278,3 @@ def _subtract_ranges(
                 nxt.append((max(c1, p0), p1))
         pieces = [(a, b) for a, b in nxt if b > a]
     return pieces
-
-
-def sum_by(segments: list[FocusSegment], *, key) -> list[tuple[str, float]]:
-    totals: dict[str, float] = defaultdict(float)
-    for s in segments:
-        totals[key(s)] += s.duration_s
-    return sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
-
-
-def top_titles(segments: list[FocusSegment], *, limit: int) -> list[tuple[str, float, str]]:
-    totals: dict[tuple[str, str], float] = defaultdict(float)
-    for s in segments:
-        if not s.title:
-            continue
-        totals[(s.title, s.app)] += s.duration_s
-    ranked = sorted(totals.items(), key=lambda kv: (-kv[1], kv[0][0]))
-    return [(title, secs, app) for (title, app), secs in ranked[:limit]]
-
-
-def hour_apps(
-    segments: list[FocusSegment],
-    away: list[AwaySegment] | None = None,
-    *,
-    meetings: list[MeetingSession] | None = None,
-) -> list[tuple[str, list[tuple[str, float]]]]:
-    """Bucket focus + optional away/meeting sessions into local-hour slices."""
-    buckets: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-
-    def _add(start_z: str, duration_s: float, label: str) -> None:
-        remaining, cursor = duration_s, parse_ts(start_z).astimezone()
-        while remaining > 0.5:
-            hour_end = cursor.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-            slice_s = min(remaining, (hour_end - cursor).total_seconds())
-            if slice_s <= 0:
-                break
-            buckets[cursor.strftime("%H:00")][label] += slice_s
-            remaining -= slice_s
-            cursor = hour_end
-
-    for s in segments:
-        _add(s.start, s.duration_s, s.app)
-    for m in meetings or []:
-        _add(m.start, m.duration_s, "meeting" if m.phase == "in_call" else "tab_open")
-    for a in away or []:
-        if meetings is not None and a.presence == "meeting":
-            continue
-        _add(a.start, a.duration_s, "meeting" if a.presence == "meeting" else "away")
-    return [
-        (h, sorted(buckets[h].items(), key=lambda kv: (-kv[1], kv[0])))
-        for h in sorted(buckets)
-    ]

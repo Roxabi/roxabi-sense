@@ -1,12 +1,7 @@
 """Compiled products over the event store (day recap, presence, status, etc.)."""
 
 from roxabi_sense.report.care import compile_care_brief
-from roxabi_sense.report.day import (
-    DayRecap,
-    compile_day_recap,
-    format_day_recap,
-    format_day_recap_share,
-)
+from roxabi_sense.report.day import DayRecap, compile_day_recap
 from roxabi_sense.report.event_summary import summarize_event
 from roxabi_sense.report.presence import (
     Presence,
@@ -14,6 +9,7 @@ from roxabi_sense.report.presence import (
     format_presence_lines,
     presence_from_store,
 )
+from roxabi_sense.report.render.day import format_day_recap, format_day_recap_share
 from roxabi_sense.report.status import (
     StatusSnapshot,
     load_status_snapshot,

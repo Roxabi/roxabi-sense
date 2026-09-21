@@ -12,9 +12,8 @@ from roxabi_sense.report.meeting import (
     meeting_samples,
 )
 from roxabi_sense.report.meeting_fidelity import meeting_fidelity_from_events
-from roxabi_sense.report.segments import parse_ts
 from roxabi_sense.store import Event
-from roxabi_sense.util.time import to_z
+from roxabi_sense.util.time import parse_ts, to_z
 
 
 @dataclass(frozen=True)

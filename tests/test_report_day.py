@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from roxabi_sense.cli import main
-from roxabi_sense.report.day import compile_day_recap, format_day_recap
+from roxabi_sense.report.day import compile_day_recap
+from roxabi_sense.report.render.day import format_day_recap
 from roxabi_sense.store import Store
 
 

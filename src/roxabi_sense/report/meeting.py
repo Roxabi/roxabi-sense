@@ -11,9 +11,9 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal
 
-from roxabi_sense.report.segments import AwaySegment, parse_ts
+from roxabi_sense.report.away import AwaySegment
 from roxabi_sense.store import Event
-from roxabi_sense.util.time import to_z
+from roxabi_sense.util.time import parse_ts, to_z
 
 # Operator + API vocabulary (one name — ADR-004).
 MeetingPhase = Literal["in_call", "tab_open"]
