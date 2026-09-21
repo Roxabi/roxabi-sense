@@ -4,7 +4,7 @@
 
 > Status: **phases 1–3 live** (collectors + store + CLI + daemon + MCP stdio) · NATS still stub  
 > Not screenpipe. Not a web SaaS. Not inside `roxabi-factory`.  
-> Agent SSOT: [`AGENTS.md`](./AGENTS.md) · Claude shim: [`CLAUDE.md`](./CLAUDE.md)
+> Agent SSOT: [`AGENTS.md`](./AGENTS.md)
 
 ---
 

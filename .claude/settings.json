@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "agent-browser@agent-browser": true,
+    "context7@context7-marketplace": true,
+    "semctx@semctx-stable": true
+  }
+}

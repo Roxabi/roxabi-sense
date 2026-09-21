@@ -1,6 +1,6 @@
 # Frontend Patterns — roxabi-sense
 
-**No product frontend.** Declared in `.claude/stack.yml`:
+**No product frontend.** Declared in `.dev/stack.yml`:
 
 ```yaml
 frontend:

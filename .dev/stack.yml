@@ -1,4 +1,4 @@
-# .claude/stack.yml — roxabi-sense
+# .dev/stack.yml — roxabi-sense
 # Local workstation attention sensor: collectors → SQLite → CLI / MCP / NATS opt-in.
 # Not factory monorepo, not silex-boilerplate / hosted web. See docs/ARCHITECTURE.md.
 
@@ -59,6 +59,7 @@ docs:
   framework: none
   path: docs
   format: md
+  agent_entry: AGENTS.md        # agent instruction entrypoint (read explicitly, never imported)
 
 quality_gates:
   file_length:

@@ -1,9 +1,9 @@
 # AGENTS.md — roxabi-sense
 
 Let:
-  P := this file (product + agent SSOT) | C := CLAUDE.md (thin shim → `@AGENTS.md` + `@.claude/stack.yml`)
+  P := this file (product + agent SSOT)
 
-Content for agents lives **here**. `CLAUDE.md` is only imports (same pattern as roxabi-factory, metalyde, spark).
+Content for agents lives **here** (same pattern as roxabi-factory, metalyde, spark).
 
 ## Project
 
@@ -17,7 +17,7 @@ Content for agents lives **here**. `CLAUDE.md` is only imports (same pattern as 
 | **Purpose** | `docs/PURPOSE.md` |
 | **Architecture** | `docs/ARCHITECTURE.md` |
 | **Axial ADR** | `docs/architecture/adr/001-axis-of-decomposition.md` (`axial: true`) |
-| **Stack** | `.claude/stack.yml` · Python ≥3.13 · uv · ruff · pytest · pyright · systemd `--user` |
+| **Stack** | `.dev/stack.yml` · Python ≥3.13 · uv · ruff · pytest · pyright · systemd `--user` |
 | **Human entry** | `README.md` |
 
 ## TL;DR
@@ -146,7 +146,7 @@ deploy/         # systemd user unit
 | `docs/architecture/adr/004-meeting-sessions-parallel-track.md` | Call sessions ∥ focus (`in_call` / `tab_open`) |
 | `docs/standards/backend-patterns.md` | Collectors / store / surfaces rules |
 | `docs/standards/frontend-patterns.md` | Explicit “no product FE” |
-| `.claude/stack.yml` | Commands, QG, release component |
+| `.dev/stack.yml` | Commands, QG, release component |
 | `artifacts/analyses/quality-audit/` | Last multi-agent quality audit (local) |
 
 ## Anti-patterns (short)
