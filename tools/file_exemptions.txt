@@ -2,3 +2,11 @@
 src/roxabi_sense/atspi/agent_worker.py # 510 lines
 # Multi-strategy focus→session join (process tree + pane_title + path); split if it grows further.
 src/roxabi_sense/util/agent_link.py # 380 lines
+# Pre-existing violations surfaced when lefthook was finally installed (#81).
+# Capped at their current size: the gate now blocks any growth. Seams in #81.
+# Day recap: compile + share/full renderers + their format helpers.
+src/roxabi_sense/report/day.py # 475 lines
+# Focus segmentation + terminal-stay stats + aggregation over one segment model.
+src/roxabi_sense/report/segments.py # 426 lines
+# Care brief: one compile entry with its stretch/away/pause-clock helpers.
+src/roxabi_sense/report/care.py # 329 lines
