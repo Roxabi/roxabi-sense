@@ -140,9 +140,7 @@ def self_test() -> int:
         fake = Path(tmp) / "pip-licenses"
         fake.write_text(
             "#!/bin/sh\n"
-            "printf '%s\\n' '"
-            "[{\"Name\":\"evil-gpl\",\"Version\":\"1.0.0\","
-            "\"License\":\"GPL-3.0-only\"}]'\n"
+            "printf '%s\\n' '[{\"Name\":\"evil-gpl\",\"Version\":\"1.0.0\",\"License\":\"GPL-3.0-only\"}]'\n"
         )
         fake.chmod(0o755)
         env = os.environ.copy()
@@ -156,8 +154,7 @@ def self_test() -> int:
         )
         if result.returncode != 1:
             print(
-                "ERROR: license_check --self-test: expected exit 1 "
-                f"on GPL-3.0-only, got {result.returncode}",
+                f"ERROR: license_check --self-test: expected exit 1 on GPL-3.0-only, got {result.returncode}",
                 file=sys.stderr,
             )
             if result.stderr:
