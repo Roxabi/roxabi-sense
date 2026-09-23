@@ -130,7 +130,7 @@ def cap_json_bytes(
     obj: dict[str, Any],
     *,
     max_bytes: int = CARE_BRIEF_MAX_BYTES,
-    trim_keys: tuple[str, ...] = ("top_apps", "signals"),
+    trim_keys: tuple[str, ...] = ("top_apps", "signals", "agent_repos", "focus_repos"),
 ) -> dict[str, Any]:
     """Fail closed: drop extra list rows until serialized size fits."""
 

@@ -1,6 +1,9 @@
 """Heartbeat care_brief — compact JSON over day recap + presence.
 
-Facts only: apps / presence / current stretch / last pause clock. No titles, no policy.
+Facts only: apps / repos / presence / current stretch / last pause clock. No titles,
+no policy. Repo facts answer "what": ``focus_repos`` = where your terminal focus
+went (you work on it); ``agent_repos`` = where agents were ``working`` (it moves
+forward), with the share that ran while your focus was elsewhere.
 """
 
 from __future__ import annotations
@@ -10,10 +13,12 @@ from typing import Any
 
 from roxabi_sense.report.clock.pause import _current_stretch, _last_away, _pause_clock
 from roxabi_sense.report.event_summary import cap_json_bytes
+from roxabi_sense.report.segments import is_terminal_app
 from roxabi_sense.util.time import parse_ts
 
 _BRIEF_APPS = 8
 _STALE_AGENT_S = 1800.0
+_BRIEF_SESSIONS = 4
 _SHAPE = {
     "deep": "focused",
     "steady": "focused",
@@ -54,6 +59,9 @@ def compile_care_brief(
         }
     pres_state = str(presence.get("state") or "")
     current = _current_stretch(attn, now=n, presence_state=pres_state)
+    focused_repo = getattr(recap, "focused_repo_now", None)
+    if current is not None and focused_repo and is_terminal_app(str(current.get("app"))):
+        current = {**current, "repo": focused_repo}
     last_away = _last_away(
         getattr(recap, "away_segments", []) or [],
         now=n,
@@ -92,6 +100,16 @@ def compile_care_brief(
         }
         for a in apps[:_BRIEF_APPS]
     ]
+    focus_repos = [
+        {
+            "repo": repo,
+            "minutes": round(secs / 60.0, 2),
+            "share": round(secs / tracked_s, 4) if tracked_s else 0.0,
+        }
+        for repo, secs in (getattr(recap, "time_by_repo", None) or [])[:_BRIEF_APPS]
+    ]
+    agent_rows = (getattr(recap, "agent_time_by_repo", None) or [])[:_BRIEF_APPS]
+    agent_repos = [_agent_repo_row(a) for a in agent_rows]
     pres = {
         "state": presence.get("state"),
         "idle_since": presence.get("idle_since"),
@@ -109,6 +127,8 @@ def compile_care_brief(
             "away_minutes": round(away_s / 60.0, 2),
             "idle_events": int(getattr(recap, "idle_events", 0) or 0),
             "top_apps": top,
+            "focus_repos": focus_repos,
+            "agent_repos": agent_repos,
             "focus_switches": int(getattr(recap, "focus_switches", 0) or 0),
             "longest_focus_app": longest,
             "current_stretch": current,
@@ -159,21 +179,28 @@ def _agent_brief(
         count = len(rows)
     if snapshot_ts is None and payload is None and count == 0:
         return None, "no_snapshot"
-    minutes = None
-    total = 0.0
-    any_span = False
-    for r in rows:
-        fs, ls = getattr(r, "first_seen", None), getattr(r, "last_seen", None)
-        if fs and ls:
-            try:
-                total += max(0.0, (parse_ts(ls) - parse_ts(fs)).total_seconds())
-                any_span = True
-            except ValueError:
-                pass
-    if any_span:
-        minutes = round(total / 60.0, 2)
     reason = "tracked_sources_empty" if count == 0 else None
-    return {"count": count, "minutes": minutes}, reason
+    return {"count": count}, reason
+
+
+def _agent_repo_row(a: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "repo": a.repo,
+        "working_minutes": round(a.working_s / 60.0, 2),
+        "unfocused_minutes": round(a.unfocused_s / 60.0, 2),
+    }
+    if a.now:
+        row["now"] = dict(a.now)
+    row["sessions"] = [
+        {
+            "session_id": s.session_id,
+            "title": s.title or None,
+            "working_minutes": round(s.working_s / 60.0, 2),
+            "now": s.now,
+        }
+        for s in a.sessions[:_BRIEF_SESSIONS]
+    ]
+    return row
 
 
 def _brief_signals(

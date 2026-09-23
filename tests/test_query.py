@@ -313,5 +313,5 @@ def test_care_brief_stale_last_ok_is_null(tmp_path: Path) -> None:
     with Store(db) as store:
         store.set_meta("agent_sessions_last_ok", utc_now_z())
     fresh = q.care_brief()
-    assert fresh.get("agent_sessions") == {"count": 1, "minutes": None}
+    assert fresh.get("agent_sessions") == {"count": 1}
     assert fresh.get("agent_sessions_reason") is None

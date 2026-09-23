@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from roxabi_sense.collectors.mux import HerdrSessionsCollector
+from roxabi_sense.collectors.mux.herdr import KEYFRAME_S
 from roxabi_sense.config import SenseConfig, load_config
 from roxabi_sense.daemon_collectors import build_poll_collectors
 from roxabi_sense.store import Store
@@ -67,7 +68,7 @@ def test_empty_agents_writes_zero_count_once(tmp_path: Path) -> None:
     store.close()
 
 
-def test_snapshot_has_no_title_keys(tmp_path: Path) -> None:
+def test_snapshot_keeps_session_title_never_raw_terminal_title(tmp_path: Path) -> None:
     store = Store(tmp_path / "s.db")
     collector = HerdrSessionsCollector(list_agents=lambda: [_agent()])
     assert collector.tick(store) == 1
@@ -75,26 +76,57 @@ def test_snapshot_has_no_title_keys(tmp_path: Path) -> None:
     assert snap is not None
     assert snap.payload["count"] == 1
     pane = snap.payload["panes"][0]
-    assert set(pane) == {"pane_id", "cwd", "agent", "status", "focused", "session_id"}
     assert _TITLE_KEYS.isdisjoint(pane)
+    assert pane["title"] == "secret prompt"  # spinner / π chrome stripped
     assert pane["session_id"] == "2026-09-13T19-16-30-937Z_abc"
     assert pane["status"] == "working"
     store.close()
 
 
-def test_fingerprint_stable_then_status_change_reemits(tmp_path: Path) -> None:
+def test_spinner_frame_does_not_reemit_but_status_and_rename_do(tmp_path: Path) -> None:
     agents = [_agent()]
     store = Store(tmp_path / "s.db")
     collector = HerdrSessionsCollector(list_agents=lambda: agents)
     assert collector.tick(store) == 1
-    agents[0]["terminal_title"] = "other secret"
-    agents[0]["terminal_title_stripped"] = "other secret"
+    agents[0]["terminal_title_stripped"] = "π ⠋ secret prompt"
     assert collector.tick(store) == 0
     agents[0]["agent_status"] = "idle"
+    assert collector.tick(store) == 1
+    agents[0]["terminal_title_stripped"] = "π > renamed task"
     assert collector.tick(store) == 1
     snap = store.last_by_kind("herdr_snapshot")
     assert snap is not None
     assert snap.payload["panes"][0]["status"] == "idle"
+    assert snap.payload["panes"][0]["title"] == "renamed task"
+    store.close()
+
+
+def test_keyframe_reemits_unchanged_state_after_interval(tmp_path: Path) -> None:
+    """Unchanged state is re-stamped so report math can bound stale snapshots."""
+    now = [1000.0]
+    store = Store(tmp_path / "s.db")
+    collector = HerdrSessionsCollector(list_agents=lambda: [_agent()], clock=lambda: now[0])
+    assert collector.tick(store) == 1
+    now[0] += KEYFRAME_S - 1
+    assert collector.tick(store) == 0
+    now[0] += 1
+    assert collector.tick(store) == 1
+    assert store.count() == 2
+    store.close()
+
+
+def test_focused_pane_recorded_and_focus_move_reemits(tmp_path: Path) -> None:
+    focused = {"pane_id": "w2:p1", "cwd": "/tmp/shell"}
+    store = Store(tmp_path / "s.db")
+    collector = HerdrSessionsCollector(
+        list_agents=lambda: [_agent(focused=False)], focused_pane=lambda: dict(focused)
+    )
+    assert collector.tick(store) == 1
+    focused["cwd"] = "/tmp/other"
+    assert collector.tick(store) == 1
+    snap = store.last_by_kind("herdr_snapshot")
+    assert snap is not None
+    assert snap.payload["focused"] == {"pane_id": "w2:p1", "cwd": "/tmp/other"}
     store.close()
 
 

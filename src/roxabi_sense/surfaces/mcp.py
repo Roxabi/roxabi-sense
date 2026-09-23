@@ -84,6 +84,8 @@ def build_mcp_server(cfg: SenseConfig):
                     "away_minutes",
                     "idle_events",
                     "top_apps",
+                    "focus_repos",
+                    "agent_repos",
                     "focus_switches",
                     "longest_focus_app",
                     "current_stretch",
@@ -99,6 +101,14 @@ def build_mcp_server(cfg: SenseConfig):
                     "db_exists",
                 ],
                 "shape": ["focused", "fragmented", "drifted", "away", "unknown"],
+                "repos": {
+                    "focus_repos": "your terminal focus per repo (Herdr focused pane)",
+                    "agent_repos": "Herdr agents `working` per repo; unfocused_minutes = "
+                    "while your focus was elsewhere; now = pane statuses",
+                    "agent_repos[].sessions": "per agent session: session_id, title "
+                    "(session auto-title), working_minutes, now (Herdr status)",
+                    "current_stretch.repo": "repo in front when the stretch is a terminal",
+                },
             }
         )
 

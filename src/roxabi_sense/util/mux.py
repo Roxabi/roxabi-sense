@@ -19,6 +19,7 @@ _cache: dict[str, tuple[float, Any]] = {}
 
 __all__ = [
     "herdr_bin",
+    "herdr_focused_pane",
     "herdr_session_id",
     "herdr_session_rows",
     "list_herdr_agents",
@@ -152,6 +153,34 @@ def _list_herdr_agents_uncached() -> list[dict[str, Any]]:
     if not isinstance(agents, list):
         return []
     return [a for a in agents if isinstance(a, dict)]
+
+
+def herdr_focused_pane() -> dict[str, str] | None:
+    """Server-focused Herdr pane (agent or plain shell): ``{pane_id, cwd}`` or None.
+
+    ``agent list`` only covers agent panes; ``pane list`` also covers shells, so it
+    is the authority for "which folder is in front" (no titles kept).
+    """
+    return _cached("herdr_focused_pane", _herdr_focused_pane_uncached)
+
+
+def _herdr_focused_pane_uncached() -> dict[str, str] | None:
+    binary = herdr_bin()
+    raw = _run([binary, "pane", "list"]) if binary else None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    result = data.get("result") if isinstance(data, dict) else None
+    panes = result.get("panes") if isinstance(result, dict) else None
+    if not isinstance(panes, list):
+        return None
+    hits = [p for p in panes if isinstance(p, dict) and p.get("focused")]
+    if len(hits) != 1:
+        return None
+    return {"pane_id": str(hits[0].get("pane_id") or ""), "cwd": str(hits[0].get("cwd") or "")}
 
 
 def list_tmux_agent_panes() -> list[dict[str, Any]]:

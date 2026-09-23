@@ -8,11 +8,11 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
-from roxabi_sense.report.dwell.aggregate import hour_apps, sum_by, top_titles
+from roxabi_sense.report.dwell.aggregate import hour_apps, top_titles
+from roxabi_sense.report.dwell.repos import HERDR_KIND, AgentRepoTime, attribute_repos
 from roxabi_sense.report.dwell.stays import TerminalStayStats, terminal_stay_stats
 from roxabi_sense.report.enrich import (
     AgentSessionRow,
@@ -66,7 +66,11 @@ class DayRecap:
     idle_mode: str
     time_by_app: list[tuple[str, float]]
     top_apps: list[AppDwell]
+    # Human focus per repo: terminal focus × Herdr focused pane (#79).
     time_by_repo: list[tuple[str, float]]
+    # Agent progress per repo: wall time with a Herdr pane `working` (focused or not).
+    agent_time_by_repo: list[AgentRepoTime]
+    focused_repo_now: str | None
     top_titles: list[tuple[str, float, str]]
     agent_sessions: list[AgentSessionRow]
     processes_seen: list[str]
@@ -114,9 +118,12 @@ def compile_day_recap(
 
     apps = top_apps(segments, limit=20)
     time_by_app = [(a.app, a.seconds) for a in apps]
-    time_by_repo = sum_by(
-        [s for s in segments if s.cwd],
-        key=lambda s: _repo_label(s.cwd or ""),
+    repos = attribute_repos(
+        events,
+        segments,
+        window_start=parse_ts(start),
+        horizon=horizon,
+        prior=store.last_by_kind_before(HERDR_KIND, start),
     )
     modes = {a.mode for a in away}
     idle_mode = _idle_mode(modes, bool(away))
@@ -157,7 +164,9 @@ def compile_day_recap(
         idle_mode=idle_mode,
         time_by_app=time_by_app,
         top_apps=apps,
-        time_by_repo=time_by_repo,
+        time_by_repo=repos.focus,
+        agent_time_by_repo=repos.agents,
+        focused_repo_now=repos.focused_repo_now,
         top_titles=top_titles(segments, limit=12),
         agent_sessions=agent_sessions(events),
         processes_seen=processes_seen(events),
@@ -176,17 +185,3 @@ def _idle_mode(modes: set[str], has_away: bool) -> str:
     if "degraded-gap" in modes:
         return "degraded-gap"
     return "mixed" if has_away else "none"
-
-
-def _repo_label(cwd: str) -> str:
-    p = Path(cwd.rstrip("/"))
-    if not p.name:
-        return cwd
-    parts = p.parts
-    if "projects" in parts:
-        tail = parts[parts.index("projects") + 1 :]
-        if len(tail) >= 2:
-            return "/".join(tail[:2])
-        if tail:
-            return tail[0]
-    return p.name

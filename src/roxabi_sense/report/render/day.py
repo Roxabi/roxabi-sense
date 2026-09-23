@@ -186,11 +186,19 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
     else:
         lines.append("  (no focus events)")
     if recap.time_by_repo:
-        lines += ["", "Repos (from focus agent.cwd)"]
+        lines += ["", "Repos in focus (terminal × herdr focused pane)"]
         repo_total = sum(s for _, s in recap.time_by_repo)
         for repo, secs in recap.time_by_repo[:12]:
             pct = (secs / repo_total * 100) if repo_total else 0
             lines.append(f"  {_pad(repo, 28)} {_fmt_dur(secs):>8}  {pct:5.1f}%")
+    if recap.agent_time_by_repo:
+        lines += ["", "Agents working by repo (total · while not in your focus)"]
+        for a in recap.agent_time_by_repo[:12]:
+            now = " ".join(f"{k}={v}" for k, v in sorted(a.now.items()))
+            lines.append(
+                f"  {_pad(a.repo, 28)} {_fmt_dur(a.working_s):>8}  "
+                f"{_fmt_dur(a.unfocused_s):>8}  {now}".rstrip()
+            )
     if recap.top_titles:
         lines += ["", "Top windows"]
         for title, secs, app in recap.top_titles[:max_titles]:
