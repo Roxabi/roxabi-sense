@@ -56,7 +56,8 @@ def build_mcp_server(cfg: SenseConfig):
 
     @mcp.tool()
     def care_brief(day: str | None = None) -> dict[str, Any]:
-        """Heartbeat day brief: apps/presence/shape. No window titles."""
+        """Heartbeat brief: apps/repos/presence/shape. No window titles; agent session
+        titles only (per repo)."""
         return q.care_brief(day)
 
     @mcp.tool()
@@ -74,7 +75,8 @@ def build_mcp_server(cfg: SenseConfig):
         return json.dumps(
             {
                 "title": "care_brief",
-                "privacy": "no window titles",
+                "privacy": "no window titles; agent session titles only "
+                "(agent_repos[].sessions[].title, ADR-002 §6)",
                 "fields": [
                     "day",
                     "first_event",
@@ -84,6 +86,8 @@ def build_mcp_server(cfg: SenseConfig):
                     "away_minutes",
                     "idle_events",
                     "top_apps",
+                    "focus_repos",
+                    "agent_repos",
                     "focus_switches",
                     "longest_focus_app",
                     "current_stretch",
@@ -99,6 +103,14 @@ def build_mcp_server(cfg: SenseConfig):
                     "db_exists",
                 ],
                 "shape": ["focused", "fragmented", "drifted", "away", "unknown"],
+                "repos": {
+                    "focus_repos": "your terminal focus per repo (Herdr focused pane)",
+                    "agent_repos": "Herdr agents `working` per repo; unfocused_minutes = "
+                    "while your focus was elsewhere; now = pane statuses",
+                    "agent_repos[].sessions": "per agent session: session_id, title "
+                    "(session auto-title), working_minutes, now (Herdr status)",
+                    "current_stretch.repo": "repo in front when the stretch is a terminal",
+                },
             }
         )
 
@@ -150,7 +162,7 @@ def tool_catalog() -> list[dict[str, str]]:
         {
             "name": "care_brief",
             "http": "GET /v1/brief?day=",
-            "returns": "heartbeat day brief (no titles)",
+            "returns": "heartbeat day brief (no window titles; agent session titles)",
         },
         {
             "name": "day_recap",

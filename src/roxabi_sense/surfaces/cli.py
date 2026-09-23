@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Dense copy-paste card (Slack/Discord/notes)",
     )
-    p_brief = sub.add_parser("care-brief", help="Heartbeat brief (no titles)")
+    p_brief = sub.add_parser("care-brief", help="Heartbeat brief (no window titles)")
     p_brief.add_argument(
         "--date",
         dest="day",

@@ -111,6 +111,23 @@ def test_cap_json_bytes_sets_truncated() -> None:
     assert len(json.dumps(out).encode()) <= 256
 
 
+def test_cap_trims_repo_rows_before_signals_and_apps() -> None:
+    """Heartbeat nudges key off `signals` (late_night): repo rows must go first."""
+    from roxabi_sense.report.event_summary import cap_json_bytes
+
+    row = {"session_id": "x" * 60, "title": "y" * 120, "working_minutes": 1.0}
+    fat = {
+        "top_apps": [{"app": "ghostty", "minutes": 1.0}],
+        "signals": ["late_night"],
+        "agent_repos": [{"repo": f"org/r{i}", "sessions": [row] * 4} for i in range(8)],
+    }
+    out = cap_json_bytes(fat, max_bytes=2048)
+    assert out["truncated"] is True
+    assert out["signals"] == ["late_night"]
+    assert out["top_apps"] == [{"app": "ghostty", "minutes": 1.0}]
+    assert len(out["agent_repos"]) < 8
+
+
 def test_from_config_mcp_detail(tmp_path: Path) -> None:
     cfg = SenseConfig(db_path=tmp_path / "s.db", mcp_detail="full")
     q = SenseQuery.from_config(cfg)
@@ -243,6 +260,7 @@ def _nested_keys(obj: object) -> set[str]:
 def test_care_brief_small_and_private(tmp_path: Path) -> None:
     db = tmp_path / "s.db"
     secret = "SECRET-WIN-TITLE"
+    agent_title = "Plan the forge migration"
     with Store(db) as store:
         store.set_meta("last_tick", "2026-08-01T18:00:00Z")
         store.set_meta("idle_watch", "ready")
@@ -260,12 +278,34 @@ def test_care_brief_small_and_private(tmp_path: Path) -> None:
                 },
                 ts=f"2026-08-01T{hour:02d}:{minute:02d}:00Z",
             )
+        store.append(
+            "herdr_snapshot",
+            {
+                "count": 1,
+                "panes": [
+                    {
+                        "pane_id": "w1:p1",
+                        "cwd": "/home/u/projects/org/repo",
+                        "agent": "omp",
+                        "status": "working",
+                        "focused": True,
+                        "session_id": "sid",
+                        "title": agent_title,
+                    }
+                ],
+                "focused": {"pane_id": "w1:p1", "cwd": "/home/u/projects/org/repo"},
+            },
+            ts="2026-08-01T12:00:00Z",
+        )
     q = SenseQuery(db_path=db, offline_threshold_s=120, idle_threshold_s=300)
     body = q.care_brief("2026-08-01")
     blob = json.dumps(body)
     assert len(blob.encode()) < 8192
     assert secret not in blob
-    keys = _nested_keys(body)
+    # ADR-002 §6 amendment: the agent session title is the only title in the brief.
+    assert body["agent_repos"][0]["sessions"][0]["title"] == agent_title
+    rows = [{**r, "sessions": []} for r in body["agent_repos"]]
+    keys = _nested_keys({**body, "agent_repos": rows})
     assert "title" not in keys
     assert "top_titles" not in keys
     assert "focus_segments" not in keys
@@ -275,6 +315,7 @@ def test_care_brief_small_and_private(tmp_path: Path) -> None:
     assert "shape" in body
     assert "signals" in body
     default = q.day_recap("2026-08-01")
+    assert agent_title not in json.dumps(default)  # every other coarse surface drops it
     assert default is not body
     assert "session_shape" in default
     assert "focus_segments" in default
@@ -313,5 +354,5 @@ def test_care_brief_stale_last_ok_is_null(tmp_path: Path) -> None:
     with Store(db) as store:
         store.set_meta("agent_sessions_last_ok", utc_now_z())
     fresh = q.care_brief()
-    assert fresh.get("agent_sessions") == {"count": 1, "minutes": None}
+    assert fresh.get("agent_sessions") == {"count": 1}
     assert fresh.get("agent_sessions_reason") is None

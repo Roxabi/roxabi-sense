@@ -210,7 +210,7 @@ sense doctor
 
 #### Privacy / trust
 
-- Default MCP redaction is **coarse** (no window titles / media tracks / full paths). Full detail only via operator config `[mcp] detail = "full"` — not tool-arg escalation (ADR-002).
+- Default MCP redaction is **coarse** (no window titles / media tracks / full paths). Full detail only via operator config `[mcp] detail = "full"` — not tool-arg escalation (ADR-002). One bounded exception: `care_brief` carries **agent session titles** (e.g. OMP auto-titles) so the heartbeat can map agent work to priorities — never window titles (ADR-002 §6 amendment).
 - Agent spawn trusts the `sense` binary on PATH. Prefer operator-owned `uv tool` install over a world-writable clone.
 - Only wire agents you trust with activity metadata.
 
@@ -281,7 +281,7 @@ Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. Fa
 |--------|---------|-------------------|
 | Grok | on (`agent_sessions`) | `~/.grok/active_sessions.json` |
 | Claude | on (`agent_sessions`) | `~/.claude/sessions/*.json` |
-| Herdr / OMP | on (`herdr`) | live `herdr agent list` (cwd, status, session_id; no titles, no jsonl) |
+| Herdr / OMP | on (`herdr`) | live `herdr agent list` + `pane list` (cwd, status, session_id, session title without spinner, focused pane; no raw terminal titles, no jsonl) |
 | tmux | on (`tmux`) | `tmux_snapshot` panes (grok/claude/omp still match) |
 | Cursor | **off** (`cursor_sessions = true`) | `~/.config/Cursor/User/workspaceStorage/*/workspace.json` |
 

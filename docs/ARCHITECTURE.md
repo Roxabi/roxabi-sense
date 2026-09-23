@@ -86,7 +86,7 @@ It does **not** call an external MCP.
 | `active_now` | `GET /v1/active` | Presence + latest focus **app name** |
 | `what_was_i_doing` | `GET /v1/timeline?day=` | Day event summaries |
 | `agent_sessions` | `GET /v1/sessions?day=` | Sessions for day |
-| `care_brief` | `GET /v1/brief?day=` | Heartbeat day brief (no titles / segments) |
+| `care_brief` | `GET /v1/brief?day=` | Heartbeat day brief (no window titles / segments; agent session titles only — ADR-002 §6 amendment) |
 | `day_recap` | `GET /v1/recap?day=` | Coarse recap (not `care_brief`; MCP has no `detail=segments`) |
 | `top_apps` | `GET /v1/top-apps?day=` | Ranked app seconds/minutes (local aggregate) |
 
@@ -136,7 +136,7 @@ stay on the workstation. Local stdio MCP remains for offline / workstation agent
 2. **Idle** — Wayland `ext-idle-notify` (primary on Cosmic); logind secondary; see ADR-002.  
 3. **Focus** — `FocusProbe` protocol under `collectors/focus/` (AT-SPI agent, x11 xprop, noop; wlr/kde P1). Selection from session env; daemon demotes when AT-SPI dies.  
 4. **Process presence** — `pgrep`-class checks for configured app names.  
-5. **Mux** — `tmux_snapshot` (tmux panes) **and** `herdr_snapshot` (live Herdr/OMP agents: pane_id, cwd, agent, status, focused, session_id — no titles). Ghostty→Herdr→OMP is the live stack; tmux+grok still works.  
+5. **Mux** — `tmux_snapshot` (tmux panes) **and** `herdr_snapshot` (live Herdr/OMP agents: pane_id, cwd, agent, status, focused, session_id, `title` = agent session title with spinner/π chrome stripped — never raw terminal titles, dropped by coarse redaction; plus `focused` = server-focused pane `{pane_id, cwd}` incl. plain shells; keyframe every 300 s). Ghostty→Herdr→OMP is the live stack; tmux+grok still works. Report layer (`report/dwell/repos.py`): **focus per repo** = terminal focus × Herdr focused pane (Ghostty titles go stale across multi-client views; bare `comm` never attributes); **agent time per repo and per session** = wall time with a pane `working`, split by whether it was in your focus; snapshots trusted ≤ 900 s (suspend / daemon down).
 
 Focus failure must not block agent-session collection.
 

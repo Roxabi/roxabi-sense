@@ -200,7 +200,8 @@ class SenseQuery:
         return _redact_obj(body) if self.detail == "coarse" else body
 
     def care_brief(self, day: str | None = None) -> dict[str, Any]:
-        """Heartbeat day brief (tool: care_brief). No titles / segments."""
+        """Heartbeat day brief (tool: care_brief). No window titles / segments; agent
+        session titles only (ADR-002 §6 amendment)."""
         if not self.db_path.is_file():
             return {"db_exists": False, "day": day, "error": "db_missing"}
         try:

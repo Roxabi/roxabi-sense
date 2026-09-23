@@ -35,48 +35,57 @@ def _completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[
     return subprocess.CompletedProcess(["fake"], returncode, stdout, "")
 
 
-def test_parses_herdr_jsonrpc_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_one_api_snapshot_serves_agents_and_focused_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     payload = {
-        "id": "cli:agent:list",
+        "id": "cli:api:snapshot",
         "result": {
-            "agents": [
-                {
-                    "agent": "omp",
-                    "agent_status": "working",
-                    "cwd": "/tmp/proj",
-                    "focused": True,
-                    "pane_id": "w1:p1",
-                    "agent_session": {
-                        "kind": "path",
-                        "value": "/home/u/.omp/agent/sessions/foo/2026-09-13T19-16-30.jsonl",
-                    },
-                    "terminal_title": "secret prompt",
-                    "terminal_title_stripped": "secret prompt",
-                }
-            ]
+            "snapshot": {
+                "focused_pane_id": "w2:p1",
+                "agents": [
+                    {
+                        "agent": "omp",
+                        "agent_status": "working",
+                        "cwd": "/tmp/proj",
+                        "pane_id": "w1:p1",
+                        "terminal_title_stripped": "secret prompt",
+                    }
+                ],
+                "panes": [
+                    {"pane_id": "w1:p1", "cwd": "/tmp/proj", "agent": "omp"},
+                    {"pane_id": "w2:p1", "cwd": "/tmp/shell", "agent": None},
+                ],
+            }
         },
     }
+    calls: list[list[str]] = []
+
+    def _run(argv: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return _completed(json.dumps(payload))
+
     monkeypatch.setattr(mux, "herdr_bin", lambda: "/fake/herdr")
-    monkeypatch.setattr(
-        mux.subprocess,
-        "run",
-        lambda *_a, **_k: _completed(json.dumps(payload)),
-    )
+    monkeypatch.setattr(mux.subprocess, "run", _run)
     agents = mux.list_herdr_agents()
-    assert len(agents) == 1
-    assert agents[0]["agent"] == "omp"
-    assert agents[0]["terminal_title"] == "secret prompt"
+    assert [a["agent"] for a in agents] == ["omp"]
+    # A plain shell pane (no agent) can be the one in front.
+    assert mux.herdr_focused_pane() == {"pane_id": "w2:p1", "cwd": "/tmp/shell"}
+    assert calls == [["/fake/herdr", "api", "snapshot"]]
 
 
-def test_parses_herdr_bare_agents_object(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_old_herdr_without_api_snapshot_falls_back_to_agent_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _run(argv: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        if argv[1:] == ["api", "snapshot"]:
+            return _completed("", returncode=2)
+        return _completed(json.dumps({"result": {"agents": [{"agent": "grok", "cwd": "/x"}]}}))
+
     monkeypatch.setattr(mux, "herdr_bin", lambda: "/fake/herdr")
-    monkeypatch.setattr(
-        mux.subprocess,
-        "run",
-        lambda *_a, **_k: _completed(json.dumps({"agents": [{"agent": "grok", "cwd": "/x"}]})),
-    )
-    agents = mux.list_herdr_agents()
-    assert agents == [{"agent": "grok", "cwd": "/x"}]
+    monkeypatch.setattr(mux.subprocess, "run", _run)
+    assert mux.list_herdr_agents() == [{"agent": "grok", "cwd": "/x"}]
+    assert mux.herdr_focused_pane() is None
 
 
 def test_herdr_missing_binary_empty() -> None:
@@ -208,7 +217,6 @@ def test_list_mux_agent_panes_normalized(monkeypatch: pytest.MonkeyPatch) -> Non
     }
 
 
-
 def test_list_tmux_agent_panes_parse(monkeypatch: pytest.MonkeyPatch) -> None:
     stdout = (
         "s\t0\tw\tgrok\t/home/m/p\t1\t100\t%1\tMy session title - grok\n"
@@ -243,6 +251,7 @@ def test_list_tmux_agent_panes_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mux.subprocess, "run", boom)
     mux.reset_mux_cache()
     assert mux.list_tmux_agent_panes() == []
+
 
 def test_tmux_collector_fingerprint_ignores_pane_title(tmp_path: Path) -> None:
     panes = [
