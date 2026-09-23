@@ -7,13 +7,16 @@ consumer can map work to a task, and ``now`` carries each session's live Herdr s
 - **Focus** (you are on it): OS focus on a terminal × the repo of Herdr's focused
   pane over the same interval. Herdr's server focus is authoritative; Ghostty window
   titles go stale across multi-client views and bare process ``comm`` picks whatever
-  long-lived agent it finds first (#79).
+  long-lived agent it finds first (#79). Wherever Herdr gives no focused repo (server
+  down, tmux host, non-terminal app linked to a session) the focus link's cwd is used,
+  never a bare-``comm`` guess.
 - **Agent time** (it moves forward): wall time with at least one Herdr pane in the
   repo reporting ``working`` — counted whether or not you look at it; ``unfocused_s``
   is the part while your focus was elsewhere (another repo, another app, or away).
 
-A snapshot is trusted for at most ``MAX_HOLD_S``: the collector re-emits a keyframe
-every 300 s, so an older state means the daemon was down or the machine suspended.
+A snapshot is trusted for at most ``MAX_HOLD_S`` (two collector keyframes): past
+that the daemon was down or the machine suspended, so such a hole adds at most
+``MAX_HOLD_S`` of agent time instead of its full length.
 """
 
 from __future__ import annotations
@@ -29,7 +32,8 @@ from roxabi_sense.store import Event
 from roxabi_sense.util.time import parse_ts
 
 HERDR_KIND = "herdr_snapshot"
-MAX_HOLD_S = 900.0
+MAX_HOLD_S = 600.0
+_EPS_S = 0.001
 
 
 @dataclass(frozen=True)
@@ -99,16 +103,8 @@ def attribute_repos(
     """Split the day into focus-per-repo and agent-working-per-repo."""
     snaps = [e for e in events if e.kind == HERDR_KIND]
     spans = _spans([prior, *snaps] if prior is not None else snaps, window_start, horizon)
-    if not spans:
-        # tmux-only / pre-Herdr hosts: focus-time link, never a bare-comm guess.
-        legacy = [s for s in segments if s.cwd and s.agent_match != "comm"]
-        totals: dict[str, float] = defaultdict(float)
-        for s in legacy:
-            totals[repo_label(s.cwd or "")] += s.duration_s
-        return RepoAttribution(_ranked(totals), [], None)
-
-    attn = _attention_per_span(spans, segments)
-    focus: dict[str, float] = defaultdict(float)
+    attn, linked = _attention(spans, segments)
+    focus: dict[str, float] = defaultdict(float, linked)
     working: dict[str, float] = defaultdict(float)
     focused_on: dict[str, float] = defaultdict(float)
     session_work: dict[tuple[str, str], float] = defaultdict(float)
@@ -126,7 +122,7 @@ def attribute_repos(
             if repo == span.focused_repo:
                 focused_on[repo] += attn_s
 
-    live = spans[-1] if spans[-1].end >= horizon else None
+    live = spans[-1] if spans and spans[-1].end >= horizon else None
     status_now = {(p.repo, p.key): p.status or "unknown" for p in live.panes} if live else {}
     sessions: dict[str, list[AgentSessionTime]] = defaultdict(list)
     for repo, key in session_work.keys() | status_now.keys():
@@ -201,21 +197,44 @@ def _pane_repos(payload: dict[str, Any]) -> tuple[_Pane, ...]:
     )
 
 
-def _attention_per_span(spans: list[_Span], segments: list[FocusSegment]) -> list[float]:
-    """Seconds of terminal focus inside each span (both lists sorted, disjoint)."""
-    terminal = [(parse_ts(s.start), parse_ts(s.end)) for s in segments if is_terminal_app(s.app)]
-    out = [0.0] * len(spans)
+def _attention(
+    spans: list[_Span], segments: list[FocusSegment]
+) -> tuple[list[float], dict[str, float]]:
+    """Terminal focus seconds per span with a known focused repo, plus every other
+    focus second credited through its linked cwd (never a bare ``comm`` guess).
+
+    Spans and segments are both sorted and disjoint (two-pointer sweep).
+    """
+    terminal = [s for s in segments if is_terminal_app(s.app)]
+    bounds = [(parse_ts(s.start), parse_ts(s.end)) for s in terminal]
+    covered = [0.0] * len(terminal)
+    per_span = [0.0] * len(spans)
     j = 0
     for i, span in enumerate(spans):
-        while j < len(terminal) and terminal[j][1] <= span.start:
+        if span.focused_repo is None:
+            continue
+        while j < len(bounds) and bounds[j][1] <= span.start:
             j += 1
         k = j
-        while k < len(terminal) and terminal[k][0] < span.end:
-            lo, hi = max(span.start, terminal[k][0]), min(span.end, terminal[k][1])
+        while k < len(bounds) and bounds[k][0] < span.end:
+            lo, hi = max(span.start, bounds[k][0]), min(span.end, bounds[k][1])
             if hi > lo:
-                out[i] += (hi - lo).total_seconds()
+                overlap = (hi - lo).total_seconds()
+                per_span[i] += overlap
+                covered[k] += overlap
             k += 1
-    return out
+    linked: dict[str, float] = defaultdict(float)
+    for seg, (lo, hi), cov in zip(terminal, bounds, covered, strict=True):
+        _credit_link(linked, seg, (hi - lo).total_seconds() - cov)
+    for seg in segments:
+        if not is_terminal_app(seg.app):
+            _credit_link(linked, seg, seg.duration_s)
+    return per_span, linked
+
+
+def _credit_link(totals: dict[str, float], seg: FocusSegment, secs: float) -> None:
+    if secs > _EPS_S and seg.cwd and seg.agent_match != "comm":
+        totals[repo_label(seg.cwd)] += secs
 
 
 def _ranked(totals: dict[str, float]) -> list[tuple[str, float]]:

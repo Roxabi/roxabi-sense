@@ -1,4 +1,4 @@
-"""HerdrSessionsCollector — structural snapshot, no titles, no live CLI."""
+"""HerdrSessionsCollector — structural snapshot + session title, no raw terminal titles."""
 
 from __future__ import annotations
 

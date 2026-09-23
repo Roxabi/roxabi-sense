@@ -86,7 +86,7 @@ It does **not** call an external MCP.
 | `active_now` | `GET /v1/active` | Presence + latest focus **app name** |
 | `what_was_i_doing` | `GET /v1/timeline?day=` | Day event summaries |
 | `agent_sessions` | `GET /v1/sessions?day=` | Sessions for day |
-| `care_brief` | `GET /v1/brief?day=` | Heartbeat day brief (no titles / segments) |
+| `care_brief` | `GET /v1/brief?day=` | Heartbeat day brief (no window titles / segments; agent session titles only — ADR-002 §6 amendment) |
 | `day_recap` | `GET /v1/recap?day=` | Coarse recap (not `care_brief`; MCP has no `detail=segments`) |
 | `top_apps` | `GET /v1/top-apps?day=` | Ranked app seconds/minutes (local aggregate) |
 

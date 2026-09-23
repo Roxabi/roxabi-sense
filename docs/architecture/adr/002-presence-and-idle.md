@@ -99,6 +99,7 @@ CLI `sense status`, MCP `sense_status` / `active_now`, and NATS mapping **call t
 ### 6. Surfaces (secondary)
 
 - **MCP:** default redaction **coarse** (no titles / title_raw / media tracks / absolute cwd); `full` only via operator config file, not tool-arg escalation  
+- **Amendment 2026-09-23 (#79, PR #86) — agent session titles in `care_brief`:** the heartbeat brief is the one coarse surface that carries **agent session titles** (`agent_repos[].sessions[].title` — the agent's own auto-title, e.g. OMP's, spinner stripped). Rationale: the heartbeat consumer must map agent work to the operator's priorities, and neither cwd (agents launched from a parent dir) nor repo alone can. Bounds: session titles only — **never** window / terminal titles, media, or paths; stored as `title` so every other coarse surface (`day_recap`, `active_now`, `what_was_i_doing`, `sense_status`, event summaries) keeps dropping it via `redact_coarse`; NATS keeps **no titles**.
 - **NATS (opt-in):** subjects `activity` \| `stale` only; envelope versioned; **no titles**; include `sources[]`, `confidence`, `degraded`; multi-source hysteresis; media-alone must not yield confident `activity`  
 - Sensor never encodes Sentinelle policy, Discord, or jobs
 

@@ -129,58 +129,60 @@ def _list_tmux_panes_uncached() -> list[dict[str, Any]]:
 
 
 def list_herdr_agents() -> list[dict[str, Any]]:
-    return _cached("list_herdr_agents", _list_herdr_agents_uncached)
-
-
-def _list_herdr_agents_uncached() -> list[dict[str, Any]]:
-    binary = herdr_bin()
-    if not binary:
-        return []
-    raw = _run([binary, "agent", "list"])
-    if not raw:
-        return []
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(data, dict) or data.get("error"):
-        return []
-    result = data.get("result")
-    if isinstance(result, dict) and "agents" in result:
-        agents = result.get("agents")
-    else:
-        agents = data.get("agents")
-    if not isinstance(agents, list):
-        return []
-    return [a for a in agents if isinstance(a, dict)]
+    return _herdr_state()["agents"]
 
 
 def herdr_focused_pane() -> dict[str, str] | None:
     """Server-focused Herdr pane (agent or plain shell): ``{pane_id, cwd}`` or None.
 
-    ``agent list`` only covers agent panes; ``pane list`` also covers shells, so it
-    is the authority for "which folder is in front" (no titles kept).
+    Herdr follows the OS-focused client window; Ghostty titles do not. None when
+    Herdr is down, too old for ``api snapshot``, or reports no focused pane.
     """
-    return _cached("herdr_focused_pane", _herdr_focused_pane_uncached)
+    return _herdr_state()["focused"]
 
 
-def _herdr_focused_pane_uncached() -> dict[str, str] | None:
+def _herdr_state() -> dict[str, Any]:
+    # One `herdr api snapshot` per cache window serves agents + focus together.
+    return _cached("herdr_state", _herdr_state_uncached)
+
+
+def _herdr_state_uncached() -> dict[str, Any]:
     binary = herdr_bin()
-    raw = _run([binary, "pane", "list"]) if binary else None
+    if not binary:
+        return {"agents": [], "focused": None}
+    result = _herdr_result(_run([binary, "api", "snapshot"]))
+    snap = result.get("snapshot") if isinstance(result, dict) else None
+    if isinstance(snap, dict):
+        return {"agents": _dict_rows(snap.get("agents")), "focused": _snapshot_focus(snap)}
+    # Herdr without `api snapshot`: agent panes only, focus unknown.
+    listed = _herdr_result(_run([binary, "agent", "list"]))
+    agents = listed.get("agents") if isinstance(listed, dict) else None
+    return {"agents": _dict_rows(agents), "focused": None}
+
+
+def _herdr_result(raw: str | None) -> dict[str, Any] | None:
     if not raw:
         return None
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
         return None
-    result = data.get("result") if isinstance(data, dict) else None
-    panes = result.get("panes") if isinstance(result, dict) else None
-    if not isinstance(panes, list):
+    if not isinstance(data, dict) or data.get("error"):
         return None
-    hits = [p for p in panes if isinstance(p, dict) and p.get("focused")]
-    if len(hits) != 1:
-        return None
-    return {"pane_id": str(hits[0].get("pane_id") or ""), "cwd": str(hits[0].get("cwd") or "")}
+    result = data.get("result")
+    return result if isinstance(result, dict) else data
+
+
+def _dict_rows(rows: Any) -> list[dict[str, Any]]:
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def _snapshot_focus(snap: dict[str, Any]) -> dict[str, str] | None:
+    pane_id = snap.get("focused_pane_id")
+    for pane in _dict_rows(snap.get("panes")):
+        if pane_id and pane.get("pane_id") == pane_id:
+            return {"pane_id": str(pane_id), "cwd": str(pane.get("cwd") or "")}
+    return None
 
 
 def list_tmux_agent_panes() -> list[dict[str, Any]]:

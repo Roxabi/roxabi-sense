@@ -1,9 +1,10 @@
 """Heartbeat care_brief — compact JSON over day recap + presence.
 
-Facts only: apps / repos / presence / current stretch / last pause clock. No titles,
-no policy. Repo facts answer "what": ``focus_repos`` = where your terminal focus
-went (you work on it); ``agent_repos`` = where agents were ``working`` (it moves
-forward), with the share that ran while your focus was elsewhere.
+Facts only: apps / repos / presence / current stretch / last pause clock. No window
+titles, no policy. Repo facts answer "what": ``focus_repos`` = where your terminal
+focus went (you work on it); ``agent_repos`` = where agents were ``working`` (it moves
+forward), with the share that ran while your focus was elsewhere, per session with
+the agent's own session title (the only title kept — ADR-002 §6 amendment).
 """
 
 from __future__ import annotations

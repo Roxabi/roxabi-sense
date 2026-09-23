@@ -27,6 +27,13 @@ _PANE_KEYS = ("pane_id", "cwd", "agent", "status", "focused", "session_id", "tit
 _TITLE_MAX = 120
 
 
+def _boot_clock() -> float:
+    """Monotonic clock that keeps counting through suspend (first tick after resume
+    re-emits); CLOCK_MONOTONIC would not, leaving the resume uncovered."""
+    boottime = getattr(time, "CLOCK_BOOTTIME", None)
+    return time.clock_gettime(boottime) if boottime is not None else time.monotonic()
+
+
 class HerdrSessionsCollector:
     name = "herdr"
 
@@ -35,7 +42,7 @@ class HerdrSessionsCollector:
         *,
         list_agents: Callable[[], list[dict[str, Any]]] | None = None,
         focused_pane: Callable[[], dict[str, str] | None] | None = None,
-        clock: Callable[[], float] = time.monotonic,
+        clock: Callable[[], float] = _boot_clock,
     ) -> None:
         self._list_agents = list_agents
         self._focused_pane = focused_pane

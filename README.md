@@ -210,7 +210,7 @@ sense doctor
 
 #### Privacy / trust
 
-- Default MCP redaction is **coarse** (no window titles / media tracks / full paths). Full detail only via operator config `[mcp] detail = "full"` — not tool-arg escalation (ADR-002).
+- Default MCP redaction is **coarse** (no window titles / media tracks / full paths). Full detail only via operator config `[mcp] detail = "full"` — not tool-arg escalation (ADR-002). One bounded exception: `care_brief` carries **agent session titles** (e.g. OMP auto-titles) so the heartbeat can map agent work to priorities — never window titles (ADR-002 §6 amendment).
 - Agent spawn trusts the `sense` binary on PATH. Prefer operator-owned `uv tool` install over a world-writable clone.
 - Only wire agents you trust with activity metadata.
 
