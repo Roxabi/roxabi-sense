@@ -24,7 +24,7 @@ Content for agents lives **here** (same pattern as roxabi-factory, metalyde, spa
 
 - **Primary axis first** (before non-trivial edit): signal **source / collector** — not surface, not host.
 - Entry: `/dev #N` → tier (S / F-lite / F-full) → lifecycle
-- All code → **worktree** off `main` (`git worktree add ../roxabi-sense-XXX -b feat/XXX-slug main`)
+- All code → **worktree** off freshly fetched `origin/main` (`git fetch origin main && git worktree add <path> -b <type>/<N>-<slug> origin/main`) · rules → `docs/processes/dev-process.md` § Branch Strategy
 - ¬`--force` | ¬`--hard` | ¬`--amend` | never push without request
 - Release: **`main` only** (no staging train) · tags `roxabi-sense/vX.Y.Z` via Release Please
 
