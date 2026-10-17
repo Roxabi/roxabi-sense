@@ -8,9 +8,12 @@ Project-specific development workflow. Agents read this via `{standards.dev_proc
 - One issue → one branch `<type>/<N>-<slug>` (`feat/`, `fix/`, `chore/`, …) → one
   worktree created from fresh `origin/main`, never from a local HEAD → one PR into `main`.
 - Releases are cut from `main` by Release Please (tags `roxabi-sense/vX.Y.Z`).
-- `.dev/stack.yml` keeps `release.model: staging-train` only because doctor N10/N11
-  refuses `trunk` while `release-please.yml` exists. It does not imply a `staging`
-  branch: tooling that probes for `origin/staging` falls back to `main`.
+- `.dev/stack.yml` keeps `release.model: staging-train` because dev-core
+  `/dev-checkup` rule N10 refuses `trunk` while `release-please.yml` exists.
+  `/feature` and `/promote` resolve their base from `release.model` alone:
+  `staging-train` → `staging`, which does not exist here. `/feature` has no usable
+  base on this repo until [roxabi-plugins#834](https://github.com/Roxabi/roxabi-plugins/issues/834)
+  adds an explicit `release.base`; there is no fallback to `main`.
 
 ## Workflow
 
