@@ -4,14 +4,13 @@ Project-specific development workflow. Agents read this via `{standards.dev_proc
 
 ## Branch Strategy
 
-<!-- Document your branching model. Example:
-  - main: production (protected, squash merge only)
-  - staging: integration (auto-deploy to staging env)
-  - feat/N-slug: feature branches (from staging)
-  - fix/N-slug: bug fixes (from staging)
--->
-
-TODO: Document your branch strategy.
+- `main` is the only long-lived branch and the only base. There is no `staging`.
+- One issue → one branch `<type>/<N>-<slug>` (`feat/`, `fix/`, `chore/`, …) → one
+  worktree created from fresh `origin/main`, never from a local HEAD → one PR into `main`.
+- Releases are cut from `main` by Release Please (tags `roxabi-sense/vX.Y.Z`).
+- `.dev/stack.yml` keeps `release.model: staging-train` only because doctor N10/N11
+  refuses `trunk` while `release-please.yml` exists. It does not imply a `staging`
+  branch: tooling that probes for `origin/staging` falls back to `main`.
 
 ## Workflow
 
