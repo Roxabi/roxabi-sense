@@ -23,7 +23,7 @@ Content for agents lives **here** (same pattern as roxabi-factory, metalyde, spa
 ## TL;DR
 
 - **Primary axis first** (before non-trivial edit): signal **source / collector** — not surface, not host.
-- Entry: `/dev #N` → tier (S / F-lite / F-full) → lifecycle
+- Entry: issue → tier (S / F-lite / F-full) → [lifecycle](#dev-process-harness) → PR → independent review / fixes → green checks → explicitly authorized merge. Actions remain within explicit authorization.
 - All code → **worktree** off freshly fetched `origin/main` (`git fetch origin main && git worktree add <path> -b <type>/<N>-<slug> origin/main`) · rules → `docs/processes/dev-process.md` § Branch Strategy
 - ¬`--force` | ¬`--hard` | ¬`--amend` | never push without request
 - Release: **`main` only** (no staging train) · tags `roxabi-sense/vX.Y.Z` via Release Please
