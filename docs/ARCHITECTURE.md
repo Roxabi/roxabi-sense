@@ -143,6 +143,16 @@ stay on the workstation. Local stdio MCP remains for offline / workstation agent
    its last confirmed health observation, retaining older unverified history.
 4. **Process presence** — `pgrep`-class checks for configured app names.  
 5. **Mux** — `tmux_snapshot` (tmux panes) **and** `herdr_snapshot` (live Herdr/OMP agents: pane_id, cwd, agent, status, focused, session_id, `title` = agent session title with spinner/π chrome stripped — never raw terminal titles, dropped by coarse redaction; plus `focused` = server-focused pane `{pane_id, cwd}` incl. plain shells; keyframe every 300 s). Ghostty→Herdr→OMP is the live stack; tmux+grok still works. Report layer (`report/dwell/repos.py`): **focus per repo** = terminal focus × Herdr focused pane (Ghostty titles go stale across multi-client views; bare `comm` never attributes); **agent time per repo and per session** = wall time with a pane `working`, split by whether it was in your focus; snapshots trusted ≤ 900 s (suspend / daemon down).
+6. **Tern** — `tern_snapshot` is a separate metadata source. Exact-window
+   inspections and exact-pane foreground-process checks distinguish selected
+   context from background work; a busy pane alone does not prove OMP runs.
+   The optional owned window plugin publishes a random title marker via a
+   private, boot-scoped, expiring registration. Only a unique marker in the
+   complete native inventory and matching endpoint/client incarnation can
+   attach Tern context to focus; failures leave native focus intact and context
+   unknown. The collector does not read terminal buffers or conversation files.
+   Semantic transitions are events; unchanged source-health observations are
+   metadata, and reports clip context to confirmed proof intervals.
 
 Focus failure must not block agent-session collection.
 

@@ -205,7 +205,7 @@ def _attention(
 
     Spans and segments are both sorted and disjoint (two-pointer sweep).
     """
-    terminal = [s for s in segments if is_terminal_app(s.app)]
+    terminal = [s for s in segments if s.app != "so.stencil.tern" and is_terminal_app(s.app)]
     bounds = [(parse_ts(s.start), parse_ts(s.end)) for s in terminal]
     covered = [0.0] * len(terminal)
     per_span = [0.0] * len(spans)
@@ -227,7 +227,12 @@ def _attention(
     for seg, (lo, hi), cov in zip(terminal, bounds, covered, strict=True):
         _credit_link(linked, seg, (hi - lo).total_seconds() - cov)
     for seg in segments:
-        if not is_terminal_app(seg.app):
+        if seg.app == "so.stencil.tern":
+            # Only the native-window joined, proof-clipped context may credit Tern.
+            # Herdr's focused pane is a different source and cannot identify it.
+            if seg.context_ref and seg.repo_ref:
+                _credit_link(linked, seg, seg.duration_s)
+        elif not is_terminal_app(seg.app):
             _credit_link(linked, seg, seg.duration_s)
     return per_span, linked
 

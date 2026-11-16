@@ -38,6 +38,7 @@ def _key(event: Event) -> tuple[str, ...]:
         start=event.ts, end=event.ts, duration_s=0, app=fields.app, title=fields.title,
         cwd=fields.cwd, agent=fields.agent, pid=fields.pid, session_id=fields.session_id,
         agent_pid=fields.agent_pid, agent_match=fields.agent_match, window_id=fields.window_id,
+        context_ref=fields.context_ref, repo_ref=fields.repo_ref,
     ))
 
 

@@ -46,6 +46,8 @@ class FocusSegment:
     agent_pid: int | None = None  # grok/claude process under the pane
     agent_match: str | None = None  # agent_link match tier
     window_id: str | None = None
+    context_ref: str | None = None
+    repo_ref: str | None = None
 
 
 def norm_app(raw: str | None) -> str:
@@ -72,6 +74,8 @@ def attention_key(seg: FocusSegment) -> tuple[str, ...]:
         return (app, "session", seg.session_id)
     if seg.agent_pid is not None:
         return (app, "agent_pid", str(seg.agent_pid))
+    if seg.context_ref:
+        return (app, "context", seg.context_ref)
     if seg.window_id:
         return (app, "window", seg.window_id)
     if seg.cwd and app.lower() in _TERMINAL_APPS:
@@ -154,7 +158,9 @@ def attention_segments(fine: list[FocusSegment]) -> list[FocusSegment]:
 
 
 def _prefer_meta(base: FocusSegment, other: FocusSegment) -> FocusSegment:
-    """Keep first segment's identity; fill missing agent/cwd/pid from later."""
+    """Never revive cleared Tern metadata; preserve legacy metadata behavior."""
+    if base.context_ref or other.context_ref:
+        return replace(other, start=base.start, end=base.end, duration_s=base.duration_s)
     return replace(
         base,
         cwd=base.cwd or other.cwd,
@@ -176,40 +182,22 @@ def focus_segments(
     """Attribute focus dwell (fine grain: app+title), cutting out away gaps."""
     if not focus_events:
         return []
-    # (t, app, title, cwd, agent, pid, session_id, agent_match, agent_pid)
-    collapsed: list[
-        tuple[
-            datetime,
-            str,
-            str,
-            str | None,
-            str | None,
-            int | None,
-            str | None,
-            str | None,
-            int | None,
-            str | None,
-            str | None,
-        ]
-    ] = []
+    collapsed: list[tuple[datetime, Any]] = []
     for e in focus_events:
-        (app, title, cwd_s, agent_s, win_pid, sid, match_s, agent_pid,
-         window_id, source) = project_focus(e)
+        fields = project_focus(e)
         t = parse_ts(e.ts)
-        if collapsed and collapsed[-1][1:] == (
-            app, title, cwd_s, agent_s, win_pid, sid, match_s, agent_pid, window_id, source
-        ):
+        if collapsed and collapsed[-1][1] == fields:
             continue
-        collapsed.append(
-            (t, app, title, cwd_s, agent_s, win_pid, sid, match_s, agent_pid, window_id, source)
-        )
+        collapsed.append((t, fields))
 
     away_ranges = [(parse_ts(a.start), parse_ts(a.end)) for a in away]
     coverage = sorted(coverage_events or [], key=lambda e: (e.ts, e.id))
     away_ranges.extend(coverage_cuts(coverage, focus_events, horizon))
     segs: list[FocusSegment] = []
     for i, row in enumerate(collapsed):
-        t0, app, title, cwd, agent, win_pid, sid, match_s, agent_pid, window_id, source = row
+        t0, fields = row
+        (app, title, cwd, agent, win_pid, sid, match_s, agent_pid, window_id,
+         source, context_ref, repo_ref) = fields
         t1 = collapsed[i + 1][0] if i + 1 < len(collapsed) else horizon
         if t1 < t0:
             t1 = t0
@@ -232,6 +220,8 @@ def focus_segments(
                     agent_pid=agent_pid,
                     agent_match=match_s,
                     window_id=window_id,
+                    context_ref=context_ref,
+                    repo_ref=repo_ref,
                 )
             )
     return segs

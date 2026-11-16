@@ -238,6 +238,16 @@ class Store:
         ).fetchall()
         return [self._row(r) for r in rows]
 
+    def iter_kind_before(self, kind: str, end: str) -> Iterator[Event]:
+        """Stream one source's facts in deterministic timestamp/id order."""
+        rows = self._conn.execute(
+            "SELECT id, ts, kind, payload FROM events WHERE kind = ? AND ts < ? "
+            "ORDER BY ts ASC, id ASC",
+            (kind, end),
+        )
+        for row in rows:
+            yield self._row(row)
+
     def events_for_day(
         self,
         day: str | None = None,

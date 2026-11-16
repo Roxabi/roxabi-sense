@@ -58,8 +58,17 @@ def run_main_loop(
     next_poll = now0 + cfg.poll_seconds
     next_desktop = now0 + cfg.focus_backup_seconds if events_enabled else float("inf")
     next_native = now0 + 1.0
+    # The focus owner exclusively owns the Tern observation writer as well.
+    if focus is not None:
+        from roxabi_sense.collectors.tern.collector import TernCollector
+        tern = TernCollector()
+    else:
+        tern = None
+    next_tern = now0 + 5.0
 
     boot_cols = list(poll_collectors)
+    if tern is not None:
+        boot_cols.append(tern)
     if focus is not None:
         boot_cols.append(focus)
     wrote = tick_all(boot_cols, store)
@@ -77,6 +86,8 @@ def run_main_loop(
     while not stop_flag():
         now = time.monotonic()
         deadlines = [next_poll]
+        if tern is not None:
+            deadlines.append(next_tern)
         if focus_rt is not None and focus_rt.active.source == "cosmic":
             deadlines.append(next_native)
         if events_enabled and focus is not None:
@@ -200,6 +211,10 @@ def run_main_loop(
                 atspi_backoff = min(_ATSPI_RESPAWN_MAX_S, atspi_backoff * 2)
             else:
                 events_enabled, focus_on_poll = sync_focus_mode(agent)
+
+        if tern is not None and now >= next_tern:
+            tick_all([tern], store)
+            next_tern = time.monotonic() + 5.0
 
         if (
             focus is not None

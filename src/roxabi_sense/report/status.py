@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from roxabi_sense.report.dwell.tern_proofs import clear_context, current_context
 from roxabi_sense.report.presence import (
     DEFAULT_IDLE_THRESHOLD_S,
     DEFAULT_OFFLINE_THRESHOLD_S,
@@ -76,14 +77,16 @@ def current_focus(
         and focus.ts >= legacy.ts
         and focus.payload.get("source") == legacy.payload.get("source")
     ):
-        return focus, "legacy_unverified"
+        return clear_context(focus), "legacy_unverified"
     if coverage is None:
-        return focus, "legacy_unverified"
+        return (clear_context(focus) if focus is not None else None), "legacy_unverified"
     if focus is None or not snapshot.db_exists or not snapshot.db_path.is_file():
         return None, "unknown"
     try:
         with Store(snapshot.db_path) as store:
             raw = store.get_meta("focus_observation")
+            tern_meta = store.get_meta("tern_observation")
+            tern_snapshot = store.last_by_kind("tern_snapshot")
         observation = json.loads(raw) if raw else {}
         if (
             isinstance(observation, dict)
@@ -100,7 +103,7 @@ def current_focus(
             and parse_ts(observation["last_observed_at"]) <= now
             and parse_ts(observation["fresh_until"]) > now
         ):
-            return focus, "observed"
+            return current_context(focus, tern_snapshot, tern_meta, now), "observed"
     except (OSError, ValueError, TypeError, KeyError):
         pass
     return None, "unknown"

@@ -8,15 +8,17 @@ from __future__ import annotations
 import json
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from typing import Any
 
 from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
 from roxabi_sense.report.dwell.aggregate import hour_apps, top_titles
 from roxabi_sense.report.dwell.current_attention import CurrentAttention, resolve_current_attention
-from roxabi_sense.report.dwell.repos import HERDR_KIND, AgentRepoTime, attribute_repos
+from roxabi_sense.report.dwell.repos import HERDR_KIND, AgentRepoTime, attribute_repos, repo_label
 from roxabi_sense.report.dwell.stays import TerminalStayStats, terminal_stay_stats
+from roxabi_sense.report.dwell.tern_proofs import normalize_focus
+from roxabi_sense.report.dwell.tern_work import TernWork, add_tern_work, summarize_tern_work
 from roxabi_sense.report.enrich import (
     AgentSessionRow,
     MediaTrack,
@@ -29,6 +31,7 @@ from roxabi_sense.report.meeting_fidelity import meeting_fidelity_from_events
 from roxabi_sense.report.meeting_sessions import MeetingSession, meeting_sessions
 from roxabi_sense.report.segments import (
     FocusSegment,
+    attention_key,
     attention_segments,
     focus_segments,
     horizon_dt,
@@ -37,7 +40,7 @@ from roxabi_sense.report.segments import (
 from roxabi_sense.report.status import current_focus, status_snapshot
 from roxabi_sense.report.top_apps import AppDwell, session_shape, top_apps
 from roxabi_sense.store import Event, Store
-from roxabi_sense.util.time import parse_ts
+from roxabi_sense.util.time import parse_ts, to_z
 
 _DAY_EVENT_LIMIT = 50_000
 @dataclass
@@ -84,9 +87,15 @@ class DayRecap:
     session_shape: str | None
     focus_coverage_quality: str = "legacy_unverified"
     current_attention: CurrentAttention | None = None
+    tern_work: TernWork | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        body = asdict(self)
+        for name in ("focus_segments", "attention_segments"):
+            for segment in body[name]:
+                segment.pop("context_ref", None)
+                segment.pop("repo_ref", None)
+        return body
 
 def compile_day_recap(
     store: Store,
@@ -182,6 +191,12 @@ def compile_day_recap(
             kind="focus_coverage",
             payload={"state": "unknown", "source": latest_coverage.payload.get("source")},
         ))
+    snapshots = list(store.iter_kind_before(
+        "tern_snapshot", to_z(max(horizon, datetime.now(UTC)) + timedelta(seconds=1))
+    ))
+    tern_meta = store.get_meta("tern_observation")
+    focus_ev, proof_cuts = normalize_focus(focus_ev, snapshots, tern_meta, horizon)
+    raw_focus, _ = normalize_focus(raw_focus, snapshots, tern_meta, horizon)
     segments = focus_segments(focus_ev, away, horizon=horizon, coverage_events=coverage)
     attn = attention_segments(segments)
     stays = terminal_stay_stats(attn)
@@ -195,6 +210,7 @@ def compile_day_recap(
         horizon=horizon,
         prior=store.last_by_kind_before(HERDR_KIND, start),
     )
+    repos = add_tern_work(repos, snapshots, tern_meta, segments, parse_ts(start), horizon)
     modes = {a.mode for a in away}
     idle_mode = _idle_mode(modes, bool(away))
     pure_away = [a for a in away if a.presence != "meeting"]
@@ -206,10 +222,20 @@ def compile_day_recap(
         events,
         focus_backend=store.get_meta("focus_backend"),
     )
-    title_sw = sum(a.end == b.start for a, b in pairwise(segments))
+    title_sw = sum(a.end == b.start and b.start not in proof_cuts for a, b in pairwise(segments))
     app_sw = switch_count(segments, key=lambda s: s.app)
-    ctx_sw = switch_count(attn)
+    ctx_sw = sum(a.end == b.start and b.start not in proof_cuts
+                 and attention_key(a) != attention_key(b) for a, b in pairwise(attn))
     active_focus, active_quality = current_focus(status_snapshot(store), now=horizon)
+    if active_focus is not None:
+        context = active_focus.payload.get("context")
+        if isinstance(context, dict) and context.get("source") == "tern":
+            cwd = context.get("cwd")
+            repos = replace(
+                repos, focused_repo_now=repo_label(cwd) if isinstance(cwd, str) and cwd else None
+            )
+        elif active_focus.payload.get("app") == "so.stencil.tern":
+            repos = replace(repos, focused_repo_now=None)
     current_attention = resolve_current_attention(
         current=active_focus, quality=active_quality, focus=raw_focus, coverage=raw_coverage,
         attention=attn, away=away, day_start=parse_ts(start), now=horizon,
@@ -258,6 +284,7 @@ def compile_day_recap(
             else "legacy_unverified"
         ),
         current_attention=current_attention,
+        tern_work=summarize_tern_work(snapshots, tern_meta, segments, parse_ts(start), horizon),
     )
 
 
