@@ -138,13 +138,17 @@ def read_registrations() -> list[dict[str, Any]]:
 
 
 def request(action: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if payload.get('schema') != 1 or not isinstance(payload.get('window_key'), str):
+    if (not isinstance(payload, dict) or type(payload.get('schema')) is not int
+            or payload['schema'] != 1 or not isinstance(payload.get('window_key'), str)):
         raise ValueError('invalid request')
     key = payload['window_key']
     if len(key.encode()) > 1024:
         raise ValueError('invalid window key')
     if action not in ('register', 'renew', 'unregister'):
         raise ValueError('invalid action')
+    delay = payload.get('delay_ms', 0)
+    if type(delay) is not int or delay not in (0, 5000) or (delay and action != 'renew'):
+        raise ValueError('invalid delay')
     requested_token = payload.get('token')
     if action != 'register':
         if not isinstance(requested_token, str) or not TOKEN.fullmatch(requested_token):
@@ -152,9 +156,39 @@ def request(action: str, payload: dict[str, Any]) -> dict[str, Any]:
         token = requested_token
     else:
         token = secrets.token_urlsafe(12)
+    admitted_boot, admitted_at = boot_identity()
+    deadline = admitted_at + 8.0
+    if delay:
+        time.sleep(delay / 1000)
     root = _directory(create=True)
-    with _locked(root):
+    path = root / (token + '.json')
+
+    def current() -> tuple[str, float]:
         boot, now = boot_identity()
+        if boot != admitted_boot or now < admitted_at or now >= deadline:
+            raise ValueError('action expired')
+        return boot, now
+
+    if action != 'register':
+        with _locked(root):
+            boot, now = current()
+            record = _read(path)
+            if not _valid(record, token, boot, now) or record['window_key'] != key:
+                raise ValueError('expired or mismatched registration')
+            if action == 'unregister':
+                path.unlink()
+                return {'schema': 1, 'ok': True}
+
+    current()
+    endpoint = endpoint_ref()
+    routes = [r for r in clients(inspect(key, deadline=deadline)) if r['window_key'] == key]
+    if len(routes) != 1:
+        raise ValueError('ambiguous window client')
+    if action == 'renew' and (record.get('endpoint_ref') != endpoint
+                              or any(record[k] != routes[0][k] for k in ('conn', 'since'))):
+        raise ValueError('window client changed')
+    with _locked(root):
+        boot, now = current()
         if action == 'register':
             count = 0
             for candidate in root.iterdir():
@@ -171,27 +205,15 @@ def request(action: str, payload: dict[str, Any]) -> dict[str, Any]:
                             candidate.unlink()
                     except (OSError, ValueError, UnicodeError):
                         continue
+        boot, now = current()
         if action == 'register':
-            if (root / (token + '.json')).exists():
+            if path.exists():
                 raise ValueError('token collision')
         else:
-            path = root / (token + '.json')
-            record = _read(path)
-            if not _valid(record, token, boot, now) or record['window_key'] != key:
-                raise ValueError('expired or mismatched registration')
-            if action == 'unregister':
-                path.unlink()
-                return {'schema': 1, 'ok': True}
-        endpoint = endpoint_ref()
-        routes = [r for r in clients(inspect(key)) if r['window_key'] == key]
-        if len(routes) != 1:
-            raise ValueError('ambiguous window client')
-        if action == 'renew' and (record.get('endpoint_ref') != endpoint
-                                  or any(record[k] != routes[0][k] for k in ('conn', 'since'))):
-            raise ValueError('window client changed')
-        boot, now = boot_identity()
-        if action == 'renew' and not _valid(record, token, boot, now):
-            raise ValueError('registration expired')
+            latest = _read(path)
+            if (latest != record or not _valid(latest, token, boot, now)
+                    or latest['window_key'] != key):
+                raise ValueError('registration changed or expired')
         record = {'schema': 1, 'token': token, **routes[0], 'endpoint_ref': endpoint,
                   'boot_id': boot, 'expires_boottime': now + LEASE}
         _write(root, token, record)

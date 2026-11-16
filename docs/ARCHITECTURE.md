@@ -158,6 +158,12 @@ stay on the workstation. Local stdio MCP remains for offline / workstation agent
    unchanged source-health observations are metadata. Proof freshness is
    anchored to each scope's request, and historical credit to confirmed sample
    bounds, never to worker completion or publication time.
+   Quiet-window renewal works around the installed SDK's timer wake behavior by
+   chaining completions of one bounded waiting Sense helper per window. Unload
+   may overlap it with one terminal token-specific unregister; an unpublished
+   in-flight registration can remain until its BOOTTIME lease expires. The
+   workaround is removable only after quiet-window timer and quiet-reload
+   bootstrap checks pass on the installed SDK.
 
 Focus failure must not block agent-session collection.
 

@@ -18,59 +18,90 @@ tern.chrome.window_title(function(win)
     return "[sense:t1:" .. token .. "] " .. title
 end)
 
-local function tick(cx)
-    if stopped then return end
-    if not executable or not cx then
-        token = nil
-        tern.chrome.refresh()
-        tern.timer(5000, tick)
+local function clear()
+    token = nil
+    key = nil
+    tern.chrome.refresh()
+end
+
+local dispatch
+dispatch = function(cx, prior)
+    if stopped or inflight then return end
+    local valid, submitted = pcall(function()
+        if not cx then return nil end
+        return cx:window_key()
+    end)
+    if not executable or not valid or type(submitted) ~= "string" then
+        clear()
         return
     end
-    key = cx:window_key()
-    if inflight then return end
+
     inflight = true
-    local action = token and "renew" or "register"
-    local prior = token
-    local payload = { schema = 1, window_key = key, token = token }
-    local started = tern.now()
+    local action = prior and "renew" or "register"
     local success = pcall(function()
+        local payload = tern.json.encode({
+            schema = 1, window_key = submitted, token = prior,
+            delay_ms = prior and 5000 or 0,
+        })
+        local started = tern.now()
         tern.process.run({executable, "tern-bridge", action}, {
-            stdin = tern.json.encode(payload), timeout_ms = 3000,
-        }, function(result, _cx)
+            stdin = payload, timeout_ms = 8000,
+        }, function(result, freshcx)
             inflight = false
             if stopped then return end
-            local parsed, response = pcall(tern.json.decode, result.stdout)
-            if result.status == 0 and not result.timed_out and parsed
-                and type(response) == "table" and response.schema == 1
-                and type(response.token) == "string"
-                and #response.token == 16 and response.token:match("^[%w_-]+$")
-                and (not prior or response.token == prior) and tern.now() - started < 10000 then
-                token = response.token
-            else
-                token = nil
+            local context_ok, current = pcall(function()
+                if not freshcx then return nil end
+                return freshcx:window_key()
+            end)
+            local clock_ok, elapsed = pcall(function() return tern.now() - started end)
+            if not context_ok or current ~= submitted or not clock_ok
+                or not (elapsed >= 0 and elapsed < 10000)
+                or type(result) ~= "table" or result.status ~= 0 or result.timed_out
+                or type(result.stdout) ~= "string" or #result.stdout > 4096 then
+                clear()
+                return
             end
+            local parsed, response = pcall(tern.json.decode, result.stdout)
+            if not parsed or type(response) ~= "table" or response.schema ~= 1
+                or type(response.token) ~= "string" or #response.token ~= 16
+                or not response.token:match("^[A-Za-z0-9_-]+$")
+                or (prior and response.token ~= prior) then
+                clear()
+                return
+            end
+            token = response.token
+            key = submitted
             tern.chrome.refresh()
-            tern.timer(5000, tick)
+            dispatch(freshcx, token)
         end)
     end)
     if not success then
         inflight = false
-        token = nil
-        tern.chrome.refresh()
-        tern.timer(5000, tick)
+        clear()
     end
 end
 
+local function tick(cx)
+    dispatch(cx, token)
+end
+
 tern.on("unload", function(_cx)
+    if stopped then return end
     stopped = true
-    if token and key and executable then
+    local prior, submitted = token, key
+    clear()
+    -- A known token gets one terminal cleanup even during a delayed renew.
+    -- An unpublished in-flight register can only expire with its bounded lease.
+    if prior and submitted and executable then
         pcall(function()
             tern.process.run({executable, "tern-bridge", "unregister"}, {
-                stdin = tern.json.encode({schema = 1, window_key = key, token = token}),
+                stdin = tern.json.encode({
+                    schema = 1, window_key = submitted, token = prior, delay_ms = 0,
+                }),
                 timeout_ms = 2000,
             }, function() end)
         end)
     end
-    token = nil
 end)
 tern.timer(0, tick)
+tern.chrome.refresh()

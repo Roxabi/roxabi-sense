@@ -138,6 +138,16 @@ without a marker. Both Sense and Tern must address the same daemon endpoint.
 It reads metadata, not terminal contents or conversation files. Restarting or
 reloading generates new markers; expired registrations cannot be renewed.
 
+The installed Tern SDK may not wake a quiet window for a timer. As a
+workaround, each active window keeps one bounded Sense renewal helper waiting
+between successful registrations; each renewal starts a new helper. Unload may
+briefly overlap it with one terminal, token-specific unregister helper. An
+initial registration still in flight can leave an unpublished record until its
+short BOOTTIME lease expires; without its marker it cannot identify a window.
+This adds helper startups and one waiting process per active window. Remove the
+workaround only once the installed SDK passes both quiet-window timer and
+quiet-reload bootstrap checks; it does not fix the SDK itself.
+
 To smoke-check the owned copy without contacting the running daemon, use an
 isolated configuration and a nonexistent daemon socket:
 
