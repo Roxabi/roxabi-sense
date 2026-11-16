@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
-from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
+from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, _idle_mode, away_segments
 from roxabi_sense.report.dwell.aggregate import hour_apps, top_titles
 from roxabi_sense.report.dwell.coverage import native_confirmation
 from roxabi_sense.report.dwell.current_attention import (
@@ -18,10 +18,16 @@ from roxabi_sense.report.dwell.current_attention import (
     focus_key,
     resolve_current_attention,
 )
-from roxabi_sense.report.dwell.repos import HERDR_KIND, AgentRepoTime, attribute_repos, repo_label
+from roxabi_sense.report.dwell.repos import (
+    HERDR_KIND,
+    AgentRepoTime,
+    _with_current_repo,
+    attribute_repos,
+)
 from roxabi_sense.report.dwell.stays import TerminalStayStats, terminal_stay_stats
 from roxabi_sense.report.dwell.tern_proofs import project_timeline, switch_metrics
 from roxabi_sense.report.dwell.tern_work import TernWork, add_tern_work, summarize_tern_work
+from roxabi_sense.report.dwell.truncation import _tern_prefix, clip_inferred, focus_boundary
 from roxabi_sense.report.enrich import (
     AgentSessionRow,
     MediaTrack,
@@ -29,9 +35,9 @@ from roxabi_sense.report.enrich import (
     media_tracks,
     processes_seen,
 )
-from roxabi_sense.report.meeting import annotate_away_with_meetings
-from roxabi_sense.report.meeting_fidelity import meeting_fidelity_from_events
-from roxabi_sense.report.meeting_sessions import MeetingSession, meeting_sessions
+from roxabi_sense.report.meetings import evidence
+from roxabi_sense.report.meetings.sessions import MeetingSession
+from roxabi_sense.report.meetings.signals import annotate_away_with_meetings
 from roxabi_sense.report.segments import (
     FocusSegment,
     attention_segments,
@@ -42,7 +48,7 @@ from roxabi_sense.report.segments import (
 from roxabi_sense.report.status import current_focus, status_snapshot
 from roxabi_sense.report.top_apps import AppDwell, session_shape, top_apps
 from roxabi_sense.store import Store
-from roxabi_sense.util.time import parse_ts, to_z
+from roxabi_sense.util.time import parse_ts
 
 _DAY_EVENT_LIMIT = 50_000
 @dataclass
@@ -66,12 +72,20 @@ class DayRecap:
     terminal_stays: TerminalStayStats
     away_segments: list[AwaySegment]
     away_total_s: float
-    # ADR-004: meeting_total_s = Σ in_call sessions only (not idle overlay sum).
+    # Union of observed joined intervals; inferred calls are reported separately.
     meeting_total_s: float
     meeting_tab_open_s: float
     meeting_sessions: list[MeetingSession]
-    meeting_fidelity: str  # full | active_only | none | unknown (ADR-004)
+    meeting_fidelity: str  # observed | partial | inferred | unknown
     meeting_fidelity_note: str
+    meeting_inferred_s: float
+    meeting_coverage_s: float
+    meeting_unknown_s: float
+    meeting_quality: str
+    focus_in_meeting_s: float
+    focus_outside_meeting_s: float
+    activity_union_s: float
+    events_truncated: bool
     idle_mode: str
     time_by_app: list[tuple[str, float]]
     top_apps: list[AppDwell]
@@ -109,13 +123,12 @@ def compile_day_recap(
     """Build a DayRecap from store events for a local calendar day."""
     start, end = store.day_bounds(day)
     day_label = day or datetime.now().astimezone().date().isoformat()
-    events = store.events_for_day(day, kinds=(), limit=_DAY_EVENT_LIMIT)
-
+    raw_events = store.events_for_day(day, kinds=(), limit=_DAY_EVENT_LIMIT)
+    horizon = horizon_dt(end, now)
+    events = [event for event in raw_events if parse_ts(event.ts) <= horizon]
     kind_counts: Counter[str] = Counter(e.kind for e in events)
     first_ts = events[0].ts if events else None
     last_ts = events[-1].ts if events else None
-
-    horizon = horizon_dt(end, now)
     # Carry-in prior-day idle so overnight leave-open does not soak last app (ADR-002).
     prior_idle = store.last_by_kind_before("idle", start)
     prior_coverage = store.last_by_kind_before("focus_coverage", start)
@@ -129,7 +142,21 @@ def compile_day_recap(
             prior_legacy, kind="focus_coverage",
             payload={**prior_legacy.payload, "state": "legacy_unverified"},
         )
-    sessions = meeting_sessions(events, horizon=horizon)
+    day_start = parse_ts(start)
+    meeting_end = max(day_start, horizon)
+    sessions, inferred_sessions, observed, meeting_coverage, truncated = (
+        evidence.compile_day_meetings(store, events, day_start, meeting_end)
+    )
+    truncated = truncated or len(raw_events) >= _DAY_EVENT_LIMIT
+    focus_end = focus_boundary(events, day_start, horizon) if truncated else horizon
+    if truncated:
+        meeting_coverage = []
+        inferred_sessions = clip_inferred(
+            inferred_sessions, parse_ts(last_ts) if last_ts else day_start
+        )
+        sessions = sorted(
+            evidence.observed_sessions(observed) + inferred_sessions, key=lambda m: m.start
+        )
     away = annotate_away_with_meetings(
         away_segments(
             [prior_coverage, *events] if prior_coverage is not None else events,
@@ -164,21 +191,18 @@ def compile_day_recap(
             and prior_focus.payload.get("window_id") == prior_coverage.payload.get("window_id")
         ):
             focus_ev.insert(0, carried)
-    overall_coverage = store.last_by_kind("focus_coverage")
-    raw_observation = store.get_meta("focus_observation")
-    snapshots = list(store.iter_kind_before(
-        "tern_snapshot", to_z(max(horizon, datetime.now(UTC)) + timedelta(seconds=1))
-    ))
-    tern_meta = store.get_meta("tern_observation")
+    overall_coverage = store.last_by_kind("focus_coverage") if not truncated else None
+    raw_observation = store.get_meta("focus_observation") if not truncated else None
+    snapshots, tern_meta, prefix_end = _tern_prefix(store, events, start, horizon, truncated)
     projection = project_timeline(
-        raw_focus, snapshots, tern_meta, horizon, history_ids={event.id for event in focus_ev},
+        raw_focus, snapshots, tern_meta, focus_end, history_ids={event.id for event in focus_ev},
         source_times={prior_focus.id: prior_focus.ts} if prior_focus else None)
     native = native_confirmation(
         coverage, native_focus, raw_observation,
-        overall_coverage.id if overall_coverage is not None else None, horizon,
+        overall_coverage.id if overall_coverage is not None else None, focus_end,
         keys={record.raw.id: focus_key(record.occurrence) for record in projection.records},
     )
-    segments = focus_segments(projection, away, horizon=horizon, native=native)
+    segments = focus_segments(projection, away, horizon=focus_end, native=native)
     attn = attention_segments(segments)
     stays = terminal_stay_stats(attn)
     apps = top_apps(segments, limit=20)
@@ -190,47 +214,47 @@ def compile_day_recap(
         horizon=horizon,
         prior=store.last_by_kind_before(HERDR_KIND, start),
     )
-    repos = add_tern_work(repos, snapshots, tern_meta, segments, parse_ts(start), horizon,
+    repos = add_tern_work(repos, snapshots, tern_meta, segments, parse_ts(start), prefix_end,
                           coverage=native)
     modes = {a.mode for a in away}
     idle_mode = _idle_mode(modes, bool(away))
     pure_away = [a for a in away if a.presence != "meeting"]
-    in_call = [m for m in sessions if m.phase == "in_call"]
-    tab_open = [m for m in sessions if m.phase == "tab_open"]
-    meeting_total_s = sum(m.duration_s for m in in_call)
-    meeting_tab_open_s = sum(m.duration_s for m in tab_open)
-    fidelity, fidelity_note = meeting_fidelity_from_events(
-        events,
-        focus_backend=store.get_meta("focus_backend"),
-    )
+    inferred_calls = [
+        (parse_ts(m.start), parse_ts(m.end)) for m in inferred_sessions if m.phase == "in_call"
+    ]
+    meeting_total_s = evidence.seconds(observed)
+    meeting_inferred_s = evidence.seconds(evidence.subtract(inferred_calls, observed))
+    meeting_tab_open_s = evidence.seconds([
+        (parse_ts(m.start), parse_ts(m.end)) for m in inferred_sessions if m.phase == "tab_open"
+    ])
+    meeting_coverage_s = evidence.seconds(meeting_coverage)
+    meeting_unknown_s = max(0.0, (meeting_end - day_start).total_seconds() - meeting_coverage_s)
+    meeting_quality = ("observed" if meeting_coverage_s > 0 and meeting_unknown_s == 0 else
+                       "partial" if meeting_coverage_s > 0 or meeting_total_s > 0 else
+                       "inferred" if meeting_inferred_s > 0 else "unknown")
+    fidelity = meeting_quality
+    fidelity_note = "Chrome Google Meet scope; observed UI only; uncovered time is unknown."
+    focus_intervals = [(parse_ts(s.start), parse_ts(s.end)) for s in segments]
+    focus_in_meeting_s = evidence.seconds(evidence.intersect(focus_intervals, observed))
+    focus_outside_meeting_s = evidence.seconds(evidence.subtract(focus_intervals, observed))
+    activity_union_s = evidence.seconds(evidence.union(focus_intervals + observed))
     title_sw, ctx_sw = switch_metrics(projection, segments, attn)
     app_sw = switch_count(segments, key=lambda s: s.app)
-    active_focus, active_quality = current_focus(
-        status_snapshot(store), now=horizon, proof_index=projection.index)
-    if active_focus is not None:
-        context = active_focus.payload.get("context")
-        if isinstance(context, dict) and context.get("source") == "tern":
-            cwd = context.get("cwd")
-            repos = replace(
-                repos, focused_repo_now=repo_label(cwd) if isinstance(cwd, str) and cwd else None
-            )
-        elif active_focus.payload.get("app") == "so.stencil.tern":
-            repos = replace(repos, focused_repo_now=None)
+    active_focus, active_quality = (
+        current_focus(status_snapshot(store), now=horizon, proof_index=projection.index)
+        if not truncated else (None, "unknown")
+    )
+    repos = _with_current_repo(repos, active_focus)
     current_attention = resolve_current_attention(
         current=active_focus, quality=active_quality, focus=projection, native=native,
         attention=attn, away=away, day_start=parse_ts(start), now=horizon,
     )
     return DayRecap(
-        day=day_label,
-        start=start,
-        end=end,
+        day=day_label, start=start, end=end,
         event_count=len(events),
         kind_counts=dict(sorted(kind_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
-        first_event=first_ts,
-        last_event=last_ts,
-        focus_switches=title_sw,
-        focus_switches_app=app_sw,
-        focus_switches_context=ctx_sw,
+        first_event=first_ts, last_event=last_ts,
+        focus_switches=title_sw, focus_switches_app=app_sw, focus_switches_context=ctx_sw,
         focus_segments=segments,
         attention_segments=attn,
         terminal_stays=stays,
@@ -241,12 +265,18 @@ def compile_day_recap(
         meeting_sessions=sessions,
         meeting_fidelity=fidelity,
         meeting_fidelity_note=fidelity_note,
+        meeting_inferred_s=meeting_inferred_s, meeting_coverage_s=meeting_coverage_s,
+        meeting_unknown_s=meeting_unknown_s, meeting_quality=meeting_quality,
+        focus_in_meeting_s=focus_in_meeting_s,
+        focus_outside_meeting_s=focus_outside_meeting_s,
+        activity_union_s=activity_union_s,
+        events_truncated=truncated,
         idle_mode=idle_mode,
         time_by_app=time_by_app,
         top_apps=apps,
         time_by_repo=repos.focus,
         agent_time_by_repo=repos.agents,
-        focused_repo_now=repos.focused_repo_now,
+        focused_repo_now=None if truncated else repos.focused_repo_now,
         top_titles=top_titles(segments, limit=12),
         agent_sessions=agent_sessions(events),
         processes_seen=processes_seen(events),
@@ -255,23 +285,15 @@ def compile_day_recap(
         hour_apps=hour_apps(segments, away, meetings=sessions),
         session_shape=session_shape(attn, away),
         focus_coverage_quality=(
-            "bounded"
+            "unknown" if truncated else "bounded"
             if raw_observation and coverage
             and all(e.payload.get("state") != "legacy_unverified" for e in coverage)
             and all(e.ts >= coverage[0].ts for e in focus_ev)
             else "legacy_unverified"
         ),
         current_attention=current_attention,
-        tern_work=summarize_tern_work(snapshots, tern_meta, segments, parse_ts(start), horizon,
+        tern_work=summarize_tern_work(snapshots, tern_meta, segments, parse_ts(start), prefix_end,
                                       coverage=native),
     )
 
 
-def _idle_mode(modes: set[str], has_away: bool) -> str:
-    if any(m.startswith("wayland") for m in modes):
-        return "wayland-idle"
-    if "logind" in modes:
-        return "logind"
-    if "degraded-gap" in modes:
-        return "degraded-gap"
-    return "mixed" if has_away else "none"

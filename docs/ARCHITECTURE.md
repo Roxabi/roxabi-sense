@@ -44,7 +44,7 @@ Minimal shapes (illustrative):
 
 Daemon **liveness** is `meta.last_tick` (and related meta keys), **not** a periodic `kind=heartbeat` event firehose — see ADR-002.
 
-**Meeting sessions** (call vs leftover tab) are a **parallel report-layer track** over `desktop_snapshot` + meeting-titled `focus` — they do not replace focus dwell and are not a presence state. Phases `in_call` | `tab_open`; `meeting_total_s` sums `in_call` only. Honesty is **conditional** on desktop inventory class (`full` multi-window vs `active_only` single-window backends): see [ADR-004](architecture/adr/004-meeting-sessions-parallel-track.md) §3.7 and `meeting_fidelity` on recap / doctor.
+**Meeting sessions** are a parallel report track, not a replacement for focus or a presence state. The opt-in Chrome Google Meet connector emits scoped UI observations; `meeting_total_s` unions confirmed observed joined intervals, while title-derived legacy sessions remain inferred and are reported separately. Union components are evidence segments, not a count of physical calls. Coverage requires healthy observations from all registered sources and is limited to Chrome Google Meet; absent, stale, conflicted or unknown sources do not prove zero calls. A truncated event window bounds reported durations to defensible evidence and is flagged separately from output-size truncation. Focus and meetings can overlap, so `activity_union_s` counts their union. Browser registration is user-data-directory-wide: a selected profile or data root locates it but does not authenticate a profile. See [operator setup](../README.md#meeting-evidence) and [ADR-004](architecture/adr/004-meeting-sessions-parallel-track.md).
 
 Store path: `~/.local/share/roxabi-sense/sense.db` (override via env / config).
 

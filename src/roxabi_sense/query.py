@@ -66,7 +66,10 @@ class SenseQuery:
 
     def active_now(self) -> dict[str, Any]:
         """Current presence + focus + agents + meeting annotation (tool: active_now)."""
-        from roxabi_sense.report.meeting_sessions import meeting_annotation_now
+        from roxabi_sense.report.meetings.evidence import (
+            meeting_annotation_for_store,
+            unknown_meeting_annotation,
+        )
 
         snap = load_status_snapshot(
             self.db_path,
@@ -88,29 +91,13 @@ class SenseQuery:
             raw = sess_ev.payload.get("sessions") or []
             if isinstance(raw, list):
                 sessions = [s for s in raw if isinstance(s, dict)]
-        meeting: dict[str, Any] = {
-            "phase": None,
-            "fidelity": "unknown",
-            "fidelity_note": "no store",
-        }
+        meeting = unknown_meeting_annotation()
         if snap.db_exists and self.db_path.is_file():
             try:
                 with Store(self.db_path) as store:
-                    ev = store.events_for_day(
-                        None,
-                        kinds=("focus", "desktop_snapshot"),
-                        limit=20_000,
-                    )
-                    meeting = meeting_annotation_now(
-                        ev,
-                        focus_backend=store.get_meta("focus_backend"),
-                    )
+                    meeting = meeting_annotation_for_store(store)
             except Exception:  # noqa: BLE001 — never break active_now
-                meeting = {
-                    "phase": None,
-                    "fidelity": "unknown",
-                    "fidelity_note": "meeting annotation unavailable",
-                }
+                meeting = unknown_meeting_annotation()
         out: dict[str, Any] = {
             "presence": snap.presence.to_dict(),
             "last_tick": snap.last_tick,
@@ -160,7 +147,11 @@ class SenseQuery:
             row: dict[str, Any] = {
                 "ts": e.ts,
                 "kind": e.kind,
-                "summary": summarize_event(e.kind, payload if isinstance(payload, dict) else {}),
+                "summary": summarize_event(
+                    e.kind,
+                    e.payload if e.kind in {"meeting_sources", "meeting_snapshot"}
+                    else payload if isinstance(payload, dict) else {},
+                ),
             }
             if self.detail == "full":
                 row["payload"] = e.payload

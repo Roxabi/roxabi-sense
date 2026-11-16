@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from roxabi_sense.report.away import IDLE_GAP_S
 from roxabi_sense.report.day import DayRecap
-from roxabi_sense.report.meeting_sessions import format_meeting_sessions
+from roxabi_sense.report.meetings.sessions import format_meeting_sessions
 from roxabi_sense.report.segments import MIN_DWELL_S
 from roxabi_sense.util.time import parse_ts
 
@@ -23,11 +23,7 @@ def format_day_recap_share(
     window = "—"
     if recap.first_event and recap.last_event:
         window = f"{_local_hm(recap.first_event)}–{_local_hm(recap.last_event)}"
-    meet = (
-        _fmt_dur(recap.meeting_total_s)
-        if recap.meeting_total_s > 0
-        else "—"
-    )
+    meet = _fmt_dur(recap.meeting_total_s) if recap.meeting_total_s > 0 else "—"
     shape = recap.session_shape or "—"
     ts = recap.terminal_stays
     if ts.visits:
@@ -46,7 +42,8 @@ def format_day_recap_share(
         [
             ["day", f"{recap.day} · {window} · {shape}"],
             ["focus / away", f"{_fmt_dur(tracked)} / {_fmt_dur(recap.away_total_s)}"],
-            ["meet / agents", f"{meet} / {len(recap.agent_sessions)}"],
+            ["meet / agents",
+             f"{meet} observed ({recap.meeting_quality}) / {len(recap.agent_sessions)}"],
             [
                 "switches",
                 (
@@ -86,6 +83,8 @@ def format_day_recap_share(
 
     n = max(len(apps), len(repos), len(titles), 0)
     blocks = [f"**sense · {recap.day}**", "", *overview]
+    if recap.events_truncated:
+        blocks.extend(["", "**Input events truncated; totals are incomplete.**"])
     if n == 0:
         return "\n".join(blocks)
 
@@ -113,14 +112,17 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
     tracked = sum(s for _, s in recap.time_by_app)
     totals = f"focus_dwell={_fmt_dur(tracked)}   away={_fmt_dur(recap.away_total_s)}"
     if recap.meeting_total_s > 0:
-        totals += f"   meeting={_fmt_dur(recap.meeting_total_s)}"
+        totals += f"   meeting_observed={_fmt_dur(recap.meeting_total_s)}"
     if recap.meeting_tab_open_s > 0:
         totals += f"   tab_open={_fmt_dur(recap.meeting_tab_open_s)}"
+    totals += f"   meeting_inferred={_fmt_dur(recap.meeting_inferred_s)}"
     lines += [
         f"sense recap  {recap.day}",
         f"window: {_fmt_span(recap.first_event, recap.last_event)}   "
         f"events={recap.event_count}   {totals}",
     ]
+    if recap.events_truncated:
+        lines.append("Input events truncated; totals are incomplete.")
     if recap.session_shape:
         lines.append(f"session_shape: {recap.session_shape}")
     lines.append(

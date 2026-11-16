@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.query import SenseQuery, _redact_obj
 from roxabi_sense.store import Store
@@ -58,7 +60,8 @@ def test_active_now_and_timeline(tmp_path: Path) -> None:
     assert now["agent_sessions"]
     assert now["agent_sessions"][0]["cwd"] == "proj"  # basename only
     assert "annotations" in now
-    assert now["annotations"]["meeting"]["phase"] is None
+    assert now["annotations"]["meeting"]["phase"] == "unknown"
+    assert now["annotations"]["meeting"]["inferred_phase"] is None
     assert "fidelity" in now["annotations"]["meeting"]
 
     tl = q.what_was_i_doing(limit=10)
@@ -139,8 +142,10 @@ def test_day_recap_missing(tmp_path: Path) -> None:
     assert q.day_recap()["error"] == "db_missing"
 
 
-def test_active_now_meeting_annotation_in_call(tmp_path: Path) -> None:
-    """ADR-004 live path: open Meet session appears under annotations.meeting."""
+def test_active_now_meeting_annotation_in_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live annotations distinguish title inference from observed participation."""
     db = tmp_path / "s.db"
     with Store(db) as store:
         store.append(
@@ -165,7 +170,7 @@ def test_active_now_meeting_annotation_in_call(tmp_path: Path) -> None:
         store.set_meta("focus_backend", "atspi")
     from datetime import UTC, datetime
 
-    from roxabi_sense.report.meeting_sessions import meeting_annotation_now
+    from roxabi_sense.report.meetings.sessions import meeting_annotation_now
 
     with Store(db) as store:
         ev = store.events_for_day(
@@ -175,19 +180,52 @@ def test_active_now_meeting_annotation_in_call(tmp_path: Path) -> None:
         )
         ann = meeting_annotation_now(
             ev,
-            now=datetime(2026, 8, 3, 15, 30, 0, tzinfo=UTC),
+            now=datetime(2026, 8, 3, 15, 1, 0, tzinfo=UTC),
             focus_backend="atspi",
         )
-    assert ann["phase"] == "in_call"
-    assert ann["provider"] == "meet"
-    assert ann["call_id"] == "abc-defg-hij"
-    assert ann["fidelity"] == "full"
+    assert ann["phase"] == "unknown"
+    assert ann["inferred_phase"] == "in_call"
+    assert ann["coverage"] == "unknown"
 
-    # Coarse strips title-derived fields when phase is set
-    redacted = _redact_obj(ann)
-    assert "label" not in redacted
-    assert "call_id" not in redacted
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 16, 12, 0, 0, 500_000, tzinfo=UTC)
+
+    monkeypatch.setattr("roxabi_sense.report.meetings.evidence.datetime", FixedDateTime)
+    # An actual joined observation, not the window title, establishes in_call.
+    source = "11111111-1111-4111-8111-111111111111"
+    with Store(db) as store:
+        store.append(
+            "meeting_sources",
+            {"v": 1, "scope": "chrome_google_meet", "sources": [source]},
+            ts="2026-11-16T12:00:00Z",
+        )
+        store.append(
+            "meeting_snapshot",
+            {
+                "v": 1,
+                "scope": "chrome_google_meet",
+                "source_id": source,
+                "epoch": "22222222-2222-4222-8222-222222222222",
+                "seq": 0,
+                "complete": True,
+                "tabs": [{
+                    "tab_id": "33333333-3333-4333-8333-333333333333",
+                    "state": "joined",
+                    "basis": "leave_control",
+                }],
+            },
+            ts="2026-11-16T12:00:00Z",
+        )
+    q = SenseQuery(db_path=db, offline_threshold_s=120, idle_threshold_s=300, detail="coarse")
+    redacted = q.active_now()["annotations"]["meeting"]
     assert redacted["phase"] == "in_call"
+    assert redacted["coverage"] == "known"
+    assert redacted["fidelity"] == "observed"
+    assert "source_id" not in redacted
+    assert "epoch" not in redacted
+    assert "tab_id" not in redacted
 
 
 def test_day_recap_coarse_strips_titles_and_media(tmp_path: Path) -> None:

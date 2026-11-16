@@ -22,7 +22,7 @@ that the daemon was down or the machine suspended, so such a hole adds at most
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -59,6 +59,19 @@ class RepoAttribution:
     focus: list[tuple[str, float]]
     agents: list[AgentRepoTime]
     focused_repo_now: str | None
+
+
+def _with_current_repo(repos: RepoAttribution, active_focus: Event | None) -> RepoAttribution:
+    if active_focus is not None:
+        context = active_focus.payload.get("context")
+        if isinstance(context, dict) and context.get("source") == "tern":
+            cwd = context.get("cwd")
+            return replace(
+                repos, focused_repo_now=repo_label(cwd) if isinstance(cwd, str) and cwd else None
+            )
+        if active_focus.payload.get("app") == "so.stencil.tern":
+            return replace(repos, focused_repo_now=None)
+    return repos
 
 
 @dataclass(frozen=True)

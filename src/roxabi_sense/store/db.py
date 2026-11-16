@@ -57,6 +57,8 @@ TIMELINE_KINDS: tuple[str, ...] = (
     "focus_coverage",
     "focus_legacy",
     "desktop_snapshot",
+    "meeting_sources",
+    "meeting_snapshot",
 )
 
 # Clamp query limits (CLI/store); avoid LIMIT -1 / unbounded scans.
@@ -114,11 +116,7 @@ class Store:
         self._batch_depth = 0
 
     def _harden_files(self) -> None:
-        for p in (
-            self.path,
-            Path(str(self.path) + "-wal"),
-            Path(str(self.path) + "-shm"),
-        ):
+        for p in (self.path, Path(str(self.path) + "-wal"), Path(str(self.path) + "-shm")):
             if p.is_file():
                 try:
                     os.chmod(p, 0o600)
@@ -135,11 +133,13 @@ class Store:
         self.close()
 
     @contextmanager
-    def batch(self) -> Iterator[None]:
-        """Group multiple append/set_meta into one commit."""
+    def batch(self, *, immediate: bool = False) -> Iterator[None]:
+        """Group writes; immediate reserves the writer before reads (outermost only)."""
+        if immediate and self._batch_depth:
+            raise ValueError("an immediate batch must be outermost")
+        if self._batch_depth == 0:
+            self._conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         self._batch_depth += 1
-        if self._batch_depth == 1:
-            self._conn.execute("BEGIN")
         try:
             yield
             if self._batch_depth == 1:

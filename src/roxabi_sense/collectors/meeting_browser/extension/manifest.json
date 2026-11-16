@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Roxabi Sense Meet observations",
+  "version": "1.0.0",
+  "description": "Reports coarse Google Meet UI observations to the local Sense native host.",
+  "permissions": ["nativeMessaging"],
+  "host_permissions": ["https://meet.google.com/*"],
+  "background": {"service_worker": "worker.js", "type": "module"},
+  "content_scripts": [{
+    "matches": ["https://meet.google.com/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle",
+    "all_frames": false
+  }]
+}

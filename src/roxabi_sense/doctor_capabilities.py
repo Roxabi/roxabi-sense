@@ -53,11 +53,11 @@ def capabilities(cfg: SenseConfig) -> dict[str, Capability]:
         except Exception:  # noqa: BLE001
             meta = {}
 
-    fidelity = _meeting_fidelity_capability(cfg, meta)
+    meeting = _meeting_capability(cfg)
     return {
         "focus": _focus_capability(cfg, meta),
         "idle": _idle_capability(cfg, meta),
-        "meeting": fidelity,
+        "meeting": meeting,
     }
 
 
@@ -69,10 +69,10 @@ def capability_checks(caps: dict[str, Capability]) -> list[CapCheck]:
         else:
             st = "ok"
         hint = None
-        if name == "meeting" and cap.status == "degraded":
+        if name == "meeting" and cap.status != "available":
             hint = (
-                "meeting_total_s may under-count multitask; "
-                "AT-SPI multi-window desktop improves fidelity"
+                "Chrome Google Meet coverage is unknown; enable and register "
+                "the browser connector, then check its observations"
             )
         out.append(
             CapCheck(
@@ -119,36 +119,49 @@ def _focus_capability(cfg: SenseConfig, meta: dict[str, str]) -> Capability:
         )
 
 
-def _meeting_fidelity_capability(cfg: SenseConfig, meta: dict[str, str]) -> Capability:
-    """Meeting call-duration honesty depends on desktop inventory class."""
-    from roxabi_sense.report.meeting_fidelity import meeting_fidelity_from_events
+def _meeting_capability(cfg: SenseConfig) -> Capability:
+    """Report current scoped browser evidence, never desktop inventory."""
+    from roxabi_sense.report.meetings.evidence import meeting_annotation_for_store
     from roxabi_sense.store import Store
 
+    if not cfg.meeting_browser:
+        return Capability(
+            status="unavailable",
+            backend="off",
+            reason="Chrome Google Meet connector disabled; coverage unknown",
+        )
     if not cfg.db_path.is_file():
         return Capability(
             status="unavailable",
-            backend="none",
-            reason="no store",
+            backend="unknown",
+            reason="no store; Chrome Google Meet coverage unknown",
         )
     try:
         with Store(cfg.db_path) as store:
-            # Recent day only — enough for operator honesty signal
-            events = store.events_for_day(None, kinds=("desktop_snapshot",), limit=500)
-            fid, note = meeting_fidelity_from_events(
-                events,
-                focus_backend=meta.get("focus_backend") or store.get_meta("focus_backend"),
-            )
-    except Exception as exc:  # noqa: BLE001
+            annotation = meeting_annotation_for_store(store)
+    except Exception:  # noqa: BLE001
         return Capability(
-            status="degraded",
+            status="unavailable",
             backend="unknown",
-            reason=str(exc)[:120],
+            reason="Chrome Google Meet evidence unavailable; coverage unknown",
         )
-    if fid == "full":
-        return Capability(status="available", backend=fid, reason=note[:160])
-    if fid == "active_only":
-        return Capability(status="degraded", backend=fid, reason=note[:160])
-    return Capability(status="degraded", backend=fid, reason=note[:160])
+    if annotation.get("reason") == "source_conflict":
+        return Capability(
+            status="unavailable",
+            backend="chrome_google_meet",
+            reason=annotation["fidelity_note"],
+        )
+    if annotation.get("fidelity") == "observed":
+        return Capability(
+            status="available",
+            backend="chrome_google_meet",
+            reason="fresh scoped browser observation; not proof of attendance",
+        )
+    return Capability(
+        status="unavailable",
+        backend="chrome_google_meet",
+        reason="Chrome Google Meet coverage unknown",
+    )
 
 
 def _idle_capability(cfg: SenseConfig, meta: dict[str, str]) -> Capability:

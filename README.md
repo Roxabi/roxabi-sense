@@ -110,7 +110,7 @@ systemctl --user enable --now roxabi-sense.service
 # 3. smoke / DoD
 sense doctor                  # FAIL if offline / no DB / MCP missing
 sense status                  # last_tick should refresh while daemon is up
-sense recap                   # day summary; Meetings fidelity=full|active_only
+sense recap                   # day summary; observed vs inferred meeting evidence
 which sense                   # typically ~/.local/bin/sense
 
 # 5. optional NATS (when factory Sentinelle is ready)
@@ -339,6 +339,106 @@ Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. Th
 - **Runtime demote** — if AT-SPI dies, daemon switches to next healthy probe without blocking other collectors.
 - Meta focus: `focus_backend`, `focus_status`, `session_type`, `desktop_family`, `last_focus_path`.
 - Meta idle: `idle_backend`, `idle_status`, `idle_chain_reason` (wayland → logind → noop).
+
+### Meeting evidence
+
+The opt-in Chrome Google Meet connector observes recognized call UI, not human
+attention or server-side attendance. It is disabled by default. Coverage is
+limited to registered Chrome Google Meet sources, not all meeting apps. Unknown
+or unsupported UI and missing, stale or conflicted sources are not proof that
+no call occurred. Recognition uses specific English UI labels; other languages,
+redesigned or reconnecting layouts can be unknown. Joined and reconnecting
+layouts have not been validated in a real call; this is not a real deployment.
+
+`meeting_total_s` unions observed call intervals; title-derived legacy signals
+are inferred and reported separately as `meeting_inferred_s`. Union components
+are evidence segments, not counts of physical calls: a gap can split one call,
+and concurrent calls can merge. Recaps expose coverage, unknown time, quality
+and event-window truncation, distinct from JSON output-size truncation. A single
+observation has no historical duration; gaps stop confirmed time at the last
+observation. Truncated input cannot certify or extend into an unseen suffix.
+Focus remains a parallel track, so use `activity_union_s` rather than adding
+focus and meeting totals. The connector collects no meeting URLs, titles,
+participants, DOM text or audio; opaque source and tab identifiers are excluded
+from coarse exports. See [ADR-004](docs/architecture/adr/004-meeting-sessions-parallel-track.md).
+
+#### Install and operate
+
+The native-host registration uses a Linux Chrome/Chromium user-data-directory
+layout. Use the actual browser and profile you intend to observe; packaged or
+custom browser layouts may differ. Keep the exported extension directory and the
+invoking `sense` installation available for the lifetime of the registration.
+
+1. Install `sense` as a stable tool from a durable clone as in [Setup](#setup-path-stable),
+   not from a temporary worktree or transient `uv run` environment. The native
+   launcher pins the invoking installation, not whichever `sense` is later on PATH.
+2. In the config used by the daemon and commands, opt in:
+
+   ```toml
+   [collectors]
+   meeting_browser = true
+   ```
+
+3. Export to a new or empty directory, then open `chrome://extensions`, enable
+   **Developer mode**, choose **Load unpacked**, and select that directory.
+   Copy the exact **ID** shown on the loaded extension's card. Keep the directory.
+
+   ```bash
+   sense meeting-browser export "$HOME/roxabi-sense-meet-extension"
+   ```
+
+4. In that browser profile open `chrome://version` and copy **Profile Path**,
+   including its profile directory (for example `.../Default`), not a guessed
+   default. Use the same config and database as the daemon. Substitute the
+   actual absolute paths and extension ID below:
+
+   ```bash
+   CONFIG="$HOME/.config/roxabi-sense/config.toml"
+   PROFILE="/absolute/path/from/chrome-version/Profile Path"
+   EXTENSION_ID="paste-the-id-from-chrome-extensions"
+   sense --config "$CONFIG" meeting-browser install --profile "$PROFILE" --extension-id "$EXTENSION_ID"
+   sense --config "$CONFIG" doctor
+   sense --config "$CONFIG" status
+   ```
+
+5. Open a Google Meet page in the selected browser and inspect `doctor`, `status`
+   and `recap`. A recognized leave control indicates UI evidence only, not
+   attendance or attention; unknown coverage is expected for unsupported states.
+
+Registration is **user-data-directory-wide**: the manifest and launcher live in
+`NativeMessagingHosts` under the profile directory's parent. `--profile` locates
+that directory but does not authenticate or isolate the profile. Alternatively,
+for both install and remove, use `--data-dir "/absolute/user-data-directory"`
+instead of `--profile`; these options are mutually exclusive. Multiple profiles
+with the same extension ID can start competing hosts for one source. A conflict
+stops writers and latches coverage unknown; it does not automatically expire.
+
+To disable collection, set `meeting_browser = false` in the same config; the
+host reloads consent before writing. To remove registration, use the same config,
+profile path and extension ID:
+
+```bash
+sense --config "$CONFIG" meeting-browser remove --profile "$PROFILE" --extension-id "$EXTENSION_ID"
+```
+
+Disable or remove the unpacked extension in `chrome://extensions` as well. For
+conflict recovery, first stop the duplicate producers, complete owned removal,
+then reinstall and leave only one producer active. If installation or removal
+was interrupted by a terminated process, including SIGKILL, complete owned
+cleanup using the same config and database before a fresh install:
+
+```bash
+USER_DATA_ROOT="/absolute/user-data-directory"
+sense --config "$CONFIG" meeting-browser remove --data-dir "$USER_DATA_ROOT" --extension-id "$EXTENSION_ID"
+```
+
+This works when the original profile directory no longer exists, provided the
+user-data root remains valid. Removal refuses modified or unowned surviving
+files; do not delete them manually as part of recovery. Process-interruption
+recovery has been tested; this is not a power-loss durability guarantee. Remove
+registration **before** moving or uninstalling the pinned executable, its
+environment or editable clone. After installing at the new stable location,
+register again. A config change does not silently migrate the active store.
 
 ### Agent sessions (Grok / Claude / Herdr·OMP / optional Cursor)
 

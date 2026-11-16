@@ -159,7 +159,7 @@ def meeting_samples(
       and no meeting window (partial/active_only does **not** clear — multitask)
     - focus: only when title matches a meeting surface (non-meeting focus omitted)
     """
-    from roxabi_sense.report.meeting_fidelity import (
+    from roxabi_sense.report.meetings.fidelity import (
         inventory_for_windows,
         is_clear_grade_inventory,
     )
@@ -208,6 +208,7 @@ def annotate_away_with_meetings(
         (parse_ts(s.start), parse_ts(s.end), s)
         for s in sessions
         if getattr(s, "phase", None) == "in_call"
+        and getattr(s, "evidence", "inferred") == "observed"
     ]
     if not in_call:
         return list(away)
@@ -235,6 +236,9 @@ def _split_away_on_calls(
     pieces: list[AwaySegment] = []
     cursor = t0
     for c0, c1, s in clips:
+        c0 = max(c0, cursor)
+        if c0 >= c1:
+            continue
         if cursor < c0:
             pieces.append(_away_slice(seg, cursor, c0, meeting=False))
         pieces.append(_away_slice(seg, c0, c1, meeting=True, session=s))
