@@ -13,6 +13,7 @@ from pathlib import Path
 
 from roxabi_sense.collectors.meeting_browser.install_files import (
     EXTENSION_ID,
+    HOST_NAME,
     create_owned,
     files_for,
     launcher,
@@ -20,6 +21,12 @@ from roxabi_sense.collectors.meeting_browser.install_files import (
     read_owned,
     safe_directory,
 )
+from roxabi_sense.collectors.meeting_browser.install_intent import (
+    cleanup_install as _cleanup_install,
+)
+from roxabi_sense.collectors.meeting_browser.install_intent import installs as _installs
+from roxabi_sense.collectors.meeting_browser.install_intent import serialized as _serialized
+from roxabi_sense.collectors.meeting_browser.install_intent import store_installs as _store_installs
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.store import Store
 from roxabi_sense.store.meeting_protocol import CONFLICTS_META, MAX_SOURCES, validate_sources
@@ -27,7 +34,6 @@ from roxabi_sense.store.meeting_protocol import CONFLICTS_META, MAX_SOURCES, val
 _META = "meeting_browser_sources"
 _BINDINGS = "meeting_browser_bindings"
 _REMOVALS = "meeting_browser_removals"
-
 
 def export_extension(destination: Path) -> Path:
     """Export into a new, empty directory without touching existing files."""
@@ -112,6 +118,7 @@ def _executable(binary: str | None) -> str:
     return candidate
 
 
+@_serialized
 def install(cfg: SenseConfig, *, profile: Path, extension_id: str,
             config_path: Path, binary: str | None = None, data_dir: bool = False) -> str:
     if not EXTENSION_ID.fullmatch(extension_id):
@@ -128,31 +135,70 @@ def install(cfg: SenseConfig, *, profile: Path, extension_id: str,
     owner_data = {"v": 1, "source_id": source, "extension_id": extension_id,
                   "binary": executable, "config": str(config_path), "db": str(db),
                   "directory": str(profile), "data_dir": data_dir}
-    created: list[Path] = []
-    try:
-        with Store(db) as store, store.batch(immediate=True):
+    paths = (registration, script, owner)
+    contents = (manifest_bytes, script_bytes, (json.dumps(owner_data) + "\n").encode())
+    stages = [registration.parent / f".{HOST_NAME}.{uuid.uuid4().hex}" for _ in paths]
+    key = str(registration)
+    with Store(db) as store:
+        with store.batch(immediate=True):
             registry = _registry(store)
-            bindings = _bindings(store, registry)
-            if str(registration) in _removals(store):
+            _bindings(store, registry)
+            if key in _removals(store):
                 raise ValueError("previous removal must be completed before reinstalling")
+            records = _installs(store)
+            if key in records:
+                raise ValueError("previous installation must be removed before reinstalling")
             _conflicts(store)
             if len(registry["sources"]) >= MAX_SOURCES:
                 raise ValueError("meeting source limit reached")
-            for path, content, mode in (
-                (script, script_bytes, 0o700),
-                (owner, (json.dumps(owner_data) + "\n").encode(), 0o600),
-                (registration, manifest_bytes, 0o600),
-            ):
-                create_owned(path, content, mode)
-                created.append(path)
+            for path in (*paths, *stages):
+                try:
+                    path.lstat()
+                except FileNotFoundError:
+                    continue
+                raise FileExistsError(f"installation target exists: {path}")
+            record = {"source": source, "extension": extension_id,
+                      "files": [base64.b64encode(value).decode("ascii") for value in contents],
+                      "stages": [path.name for path in stages], "inodes": [None] * 3}
+            records[key] = record
+            _store_installs(store, records)
+
+        for index, (path, stage, content, mode) in enumerate(
+                zip(paths, stages, contents, (0o600, 0o700, 0o600), strict=True)):
+            fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+            try:
+                info = os.fstat(fd)
+                with store.batch(immediate=True):
+                    records = _installs(store)
+                    record = records[key]
+                    record["inodes"][index] = [info.st_dev, info.st_ino]
+                    _store_installs(store, records)
+                with os.fdopen(fd, "wb") as stream:
+                    fd = -1
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.link(stage, path, follow_symlinks=False)
+                stage.unlink()
+            finally:
+                if fd != -1:
+                    os.close(fd)
+        with store.batch(immediate=True):
+            registry = _registry(store)
+            bindings = _bindings(store, registry)
+            _conflicts(store)
+            records = _installs(store)
+            if records.get(key) != record:
+                raise ValueError("installation intent changed")
+            if len(registry["sources"]) >= MAX_SOURCES:
+                raise ValueError("meeting source limit reached")
             registry["sources"].append(source)
             bindings[source] = extension_id
             store.set_meta(_BINDINGS, json.dumps(bindings, separators=(",", ":")))
             _save(store, registry)
-    except Exception:
-        for path in reversed(created):
-            path.unlink(missing_ok=True)
-        raise
+            records = _installs(store)
+            del records[key]
+            _store_installs(store, records)
     return source
 
 
@@ -160,8 +206,8 @@ def validate_installation(cfg: SenseConfig, *, profile: Path, extension_id: str,
                           data_dir: bool = False) -> dict:
     if not EXTENSION_ID.fullmatch(extension_id):
         raise ValueError("invalid extension ID")
-    profile = safe_directory(profile)
-    registration, script, owner = files_for(profile, data_dir=data_dir)
+    registration, script, owner = files_for(profile, data_dir=data_dir,
+                                             allow_missing_profile=True)
     try:
         data = json.loads(read_owned(owner))
         if (set(data) != {"v", "source_id", "extension_id", "binary", "config", "db",
@@ -169,8 +215,8 @@ def validate_installation(cfg: SenseConfig, *, profile: Path, extension_id: str,
                 or data["v"] != 1 or data["extension_id"] != extension_id
                 or type(data["data_dir"]) is not bool
                 or data["db"] != os.path.abspath(cfg.db_path.expanduser())
-                or (safe_directory(Path(data["directory"])) if data["data_dir"] else
-                    safe_directory(Path(data["directory"])).parent) != registration.parent.parent):
+                or files_for(Path(data["directory"]), data_dir=data["data_dir"],
+                             allow_missing_profile=True)[0] != registration):
             raise ValueError("registration does not match selected extension or store")
         if (read_owned(registration) != manifest(script, extension_id)
                 or read_owned(script) != launcher(data["binary"], Path(data["config"]),
@@ -183,6 +229,7 @@ def validate_installation(cfg: SenseConfig, *, profile: Path, extension_id: str,
     return data
 
 
+@_serialized
 def remove(cfg: SenseConfig, *, profile: Path, extension_id: str, data_dir: bool = False) -> None:
     if not EXTENSION_ID.fullmatch(extension_id):
         raise ValueError("invalid extension ID")
@@ -191,6 +238,12 @@ def remove(cfg: SenseConfig, *, profile: Path, extension_id: str, data_dir: bool
     key = str(paths[0])
     with Store(cfg.db_path) as store:
         with store.batch(immediate=True):
+            installs = _installs(store)
+            if key in installs:
+                _cleanup_install(installs[key], paths, extension_id)
+                del installs[key]
+                _store_installs(store, installs)
+                return
             removals = _removals(store)
             record = removals.get(key)
             if record is None:

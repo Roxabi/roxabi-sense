@@ -373,13 +373,23 @@ sense --config "$CONFIG" meeting-browser remove --profile "$PROFILE" --extension
 ```
 
 Disable or remove the unpacked extension in `chrome://extensions` as well. For
-conflict recovery, first stop the duplicate producers, complete owned removal
-(retry the same command if cleanup was interrupted), then reinstall with the
-same install command and leave only one producer active. Modified or unowned
-surviving files are not deleted automatically. Remove registration **before**
-moving or uninstalling the pinned executable, its environment or editable clone;
-after installing at the new stable location, register again. A config change
-does not silently migrate the active store.
+conflict recovery, first stop the duplicate producers, complete owned removal,
+then reinstall and leave only one producer active. If installation or removal
+was interrupted by a terminated process, including SIGKILL, complete owned
+cleanup using the same config and database before a fresh install:
+
+```bash
+USER_DATA_ROOT="/absolute/user-data-directory"
+sense --config "$CONFIG" meeting-browser remove --data-dir "$USER_DATA_ROOT" --extension-id "$EXTENSION_ID"
+```
+
+This works when the original profile directory no longer exists, provided the
+user-data root remains valid. Removal refuses modified or unowned surviving
+files; do not delete them manually as part of recovery. Process-interruption
+recovery has been tested; this is not a power-loss durability guarantee. Remove
+registration **before** moving or uninstalling the pinned executable, its
+environment or editable clone. After installing at the new stable location,
+register again. A config change does not silently migrate the active store.
 
 ### Agent sessions (Grok / Claude / Herdr·OMP / optional Cursor)
 

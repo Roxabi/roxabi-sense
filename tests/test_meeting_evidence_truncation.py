@@ -76,3 +76,51 @@ def test_truncated_focus_stops_at_focus_witness_not_unrelated_event(
     assert recap["focus_in_meeting_s"] == 8
     assert recap["focus_outside_meeting_s"] == 2
     assert recap["activity_union_s"] == 20
+
+
+@pytest.mark.parametrize(
+    ("with_focus", "joined_at", "cleared_at", "expected"),
+    [(False, 10, 20, 10), (True, 3600, 3660, 60)],
+)
+def test_truncated_prefix_preserves_closed_desktop_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_focus: bool,
+    joined_at: int, cleared_at: int, expected: int,
+) -> None:
+    db = tmp_path / "sense.db"
+    with Store(db) as store:
+        start = parse_ts(store.day_bounds(DAY)[0])
+        if with_focus:
+            store.append("focus", {"app": "editor", "title": "work"}, ts=to_z(start))
+        store.append(
+            "desktop_snapshot",
+            {"windows": [
+                {"app": "Google Chrome", "title": "meet.google.com/abc-defg-hij", "active": True},
+                {"app": "editor", "title": "work", "active": False},
+            ], "inventory": "full", "source": "atspi"},
+            ts=to_z(start + timedelta(seconds=joined_at)),
+        )
+        store.append(
+            "desktop_snapshot",
+            {"windows": [
+                {"app": "editor", "title": "work", "active": True},
+                {"app": "other", "title": "idle", "active": False},
+            ], "inventory": "full", "source": "atspi"},
+            ts=to_z(start + timedelta(seconds=cleared_at)),
+        )
+        for second in range(cleared_at + 1, cleared_at + 5):
+            store.append("process_snapshot", {}, ts=to_z(start + timedelta(seconds=second)))
+
+    monkeypatch.setattr("roxabi_sense.report.day._DAY_EVENT_LIMIT", 4)
+    monkeypatch.setattr(
+        "roxabi_sense.report.day.horizon_dt",
+        lambda end, now: start + timedelta(seconds=cleared_at + 100),
+    )
+    recap = SenseQuery(db_path=db, offline_threshold_s=120, idle_threshold_s=300).day_recap(
+        DAY, detail="segments",
+    )
+    assert recap["events_truncated"] is True
+    assert recap["meeting_total_s"] == 0
+    assert recap["meeting_inferred_s"] == expected
+    assert recap["meeting_quality"] == "inferred"
+    assert recap["focus_coverage_quality"] == "unknown"
+    assert "abc-defg-hij" not in json.dumps(recap)

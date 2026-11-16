@@ -19,7 +19,7 @@ def focus_boundary(events: list[Event], start: datetime, horizon: datetime) -> d
 
 
 def clip_inferred(sessions: list[MeetingSession], end: datetime) -> list[MeetingSession]:
-    """Inferred meeting sessions depend on focus and cannot outlive its witness."""
+    """Bound inferred sessions to the admitted event prefix, independently of focus."""
     result = []
     for session in sessions:
         start = parse_ts(session.start)

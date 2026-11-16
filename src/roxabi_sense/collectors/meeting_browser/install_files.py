@@ -33,13 +33,13 @@ def safe_directory(path: Path, *, create: bool = False) -> Path:
     return path
 
 
-def read_owned(path: Path) -> bytes:
+def read_owned(path: Path, *, max_links: int = 1) -> bytes:
     flags = os.O_RDONLY | os.O_NOFOLLOW
     fd = os.open(path, flags)
     try:
         info = os.fstat(fd)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or info.st_mode & 0o022 or info.st_nlink != 1 or info.st_size > 65536):
+                or info.st_mode & 0o022 or info.st_nlink > max_links or info.st_size > 65536):
             raise ValueError(f"unsafe file: {path}")
         with os.fdopen(fd, "rb") as stream:
             fd = -1
@@ -63,10 +63,21 @@ def create_owned(path: Path, content: bytes, mode: int) -> None:
             os.close(fd)
 
 
-def files_for(profile: Path, *, data_dir: bool = False) -> tuple[Path, Path, Path]:
-    profile = safe_directory(profile)
+def files_for(profile: Path, *, data_dir: bool = False,
+              allow_missing_profile: bool = False) -> tuple[Path, Path, Path]:
+    profile = Path(os.path.abspath(profile.expanduser()))
     if profile.name in ("", ".", ".."):
         raise ValueError("an explicit browser directory is required")
+    if allow_missing_profile and not data_dir:
+        safe_directory(profile.parent)
+        try:
+            profile.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            safe_directory(profile)
+    else:
+        safe_directory(profile)
     root = profile if data_dir else profile.parent
     host_dir = safe_directory(root / "NativeMessagingHosts", create=True)
     return (host_dir / f"{HOST_NAME}.json", host_dir / f"{HOST_NAME}.sh",

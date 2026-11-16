@@ -2,14 +2,22 @@
 
 import json
 import os
+import signal
+import subprocess
 import sys
+import textwrap
 from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
 from roxabi_sense.collectors.meeting_browser.install_files import HOST_NAME
-from roxabi_sense.collectors.meeting_browser.installer import export_extension, install, remove
+from roxabi_sense.collectors.meeting_browser.installer import (
+    export_extension,
+    install,
+    remove,
+    validate_installation,
+)
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.store import Store
 from roxabi_sense.surfaces.meeting_browser import dispatch
@@ -240,3 +248,130 @@ def test_cli_registers_custom_chrome_for_testing_data_root(tmp_path: Path, monke
     args.profile, args.data_dir = child, None
     assert dispatch(args, cfg) == 0
     assert not registration.exists()
+
+
+def test_deleted_profile_does_not_invalidate_browser_wide_installation(tmp_path: Path) -> None:
+    cfg, profile, config = _setup(tmp_path)
+    install(cfg, profile=profile, extension_id=EXTENSION,
+            config_path=config, binary=sys.executable)
+    profile.rmdir()
+    assert validate_installation(cfg, profile=profile, extension_id=EXTENSION)
+    remove(cfg, profile=profile.parent, extension_id=EXTENSION, data_dir=True)
+    assert not (profile.parent / "NativeMessagingHosts" / f"{HOST_NAME}.json").exists()
+
+
+@pytest.mark.parametrize("checkpoint", [
+    "intent", "partial", "link0", "unlink0", "link1", "unlink1",
+    "link2", "unlink2", "publish", "committed",
+])
+def test_install_recovers_after_sigkill(tmp_path: Path, checkpoint: str) -> None:
+    cfg, profile, config = _setup(tmp_path)
+    child = textwrap.dedent("""
+        import os, signal, sys
+        from pathlib import Path
+        from roxabi_sense.config import SenseConfig
+        import roxabi_sense.collectors.meeting_browser.installer as installer
+        from roxabi_sense.store import Store
+
+        checkpoint, db, profile, config = sys.argv[1:]
+        def die():
+            os.kill(os.getpid(), signal.SIGKILL)
+        original_open, original_link, original_fdopen = os.open, os.link, os.fdopen
+        original_unlink, original_save = Path.unlink, installer._save
+        original_exit = Store.__exit__
+        links = unlinks = 0
+        def opening(path, flags, *args, **kwargs):
+            if checkpoint == "intent" and flags & os.O_EXCL:
+                die()
+            return original_open(path, flags, *args, **kwargs)
+        def linking(*args, **kwargs):
+            global links
+            result = original_link(*args, **kwargs)
+            if checkpoint == f"link{links}":
+                die()
+            links += 1
+            return result
+        def unlinking(path, *args, **kwargs):
+            global unlinks
+            result = original_unlink(path, *args, **kwargs)
+            if checkpoint == f"unlink{unlinks}":
+                die()
+            unlinks += 1
+            return result
+        class Partial:
+            def __init__(self, stream): self.stream = stream
+            def __enter__(self): return self
+            def __exit__(self, *args): self.stream.close()
+            def write(self, data):
+                self.stream.write(data[:max(1, len(data) // 2)])
+                self.stream.flush()
+                die()
+        def fdopening(fd, mode, *args, **kwargs):
+            stream = original_fdopen(fd, mode, *args, **kwargs)
+            return Partial(stream) if checkpoint == "partial" and mode == "wb" else stream
+        def saving(*args, **kwargs):
+            if checkpoint == "publish":
+                die()
+            return original_save(*args, **kwargs)
+        def exiting(store, *args):
+            result = original_exit(store, *args)
+            if checkpoint == "committed":
+                die()
+            return result
+        os.open, os.link, os.fdopen = opening, linking, fdopening
+        Path.unlink, installer._save = unlinking, saving
+        Store.__exit__ = exiting
+        installer.install(SenseConfig(db_path=Path(db)), profile=Path(profile),
+                          extension_id="a" * 32, config_path=Path(config),
+                          binary=sys.executable)
+    """)
+    result = subprocess.run([sys.executable, "-c", child, checkpoint, str(cfg.db_path),
+                             str(profile), str(config)], check=False)
+    assert result.returncode == -signal.SIGKILL
+    if checkpoint != "committed":
+        with pytest.raises(ValueError, match="previous installation"):
+            install(cfg, profile=profile, extension_id=EXTENSION,
+                    config_path=config, binary=sys.executable)
+    remove(cfg, profile=profile, extension_id=EXTENSION)
+    directory = profile.parent / "NativeMessagingHosts"
+    assert not list(directory.iterdir())
+    install(cfg, profile=profile, extension_id=EXTENSION,
+            config_path=config, binary=sys.executable)
+    remove(cfg, profile=profile, extension_id=EXTENSION)
+
+
+def test_interrupted_install_refuses_modified_or_unowned_survivors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cfg, profile, config = _setup(tmp_path)
+    original_link = os.link
+    calls = 0
+
+    def interrupt(source, destination, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("interrupted")
+        return original_link(source, destination, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "link", interrupt)
+        with pytest.raises(OSError, match="interrupted"):
+            install(cfg, profile=profile, extension_id=EXTENSION,
+                    config_path=config, binary=sys.executable)
+
+    directory = profile.parent / "NativeMessagingHosts"
+    registration = directory / f"{HOST_NAME}.json"
+    script = directory / f"{HOST_NAME}.sh"
+    original = registration.read_bytes()
+    registration.write_bytes(b"modified")
+    with pytest.raises(ValueError):
+        remove(cfg, profile=profile, extension_id=EXTENSION)
+    assert script.exists() is False
+    assert list(directory.glob(f".{HOST_NAME}.*"))
+    registration.write_bytes(original)
+    script.write_bytes(b"unowned")
+    with pytest.raises(ValueError):
+        remove(cfg, profile=profile, extension_id=EXTENSION)
+    assert registration.read_bytes() == original
+    assert script.read_bytes() == b"unowned"

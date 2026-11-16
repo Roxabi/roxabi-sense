@@ -134,7 +134,9 @@ def compile_day_recap(
     focus_end = focus_boundary(events, day_start, horizon) if truncated else horizon
     if truncated:
         meeting_coverage = []
-        inferred_sessions = clip_inferred(inferred_sessions, focus_end)
+        inferred_sessions = clip_inferred(
+            inferred_sessions, parse_ts(last_ts) if last_ts else day_start
+        )
         sessions = sorted(
             evidence.observed_sessions(observed) + inferred_sessions, key=lambda m: m.start
         )
