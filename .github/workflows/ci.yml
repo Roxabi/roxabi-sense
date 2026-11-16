@@ -16,6 +16,12 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # pin
       - name: Install dependencies
         run: uv sync --frozen --all-extras --group dev
+      - name: Install Lua 5.4
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends lua5.4
+          command -v lua5.4
+          lua5.4 -v
       - name: Lint
         run: uv run ruff check .
       - name: Typecheck

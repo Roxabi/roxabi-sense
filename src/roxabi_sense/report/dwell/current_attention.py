@@ -1,16 +1,16 @@
 """Resolve a current attention run from validated source and raw observations."""
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime
 
 from roxabi_sense.report.away import AwaySegment
 from roxabi_sense.report.dwell.coverage import coverage_cuts
 from roxabi_sense.report.dwell.projection import project_focus
+from roxabi_sense.report.dwell.tern_proofs import FocusProjection
 from roxabi_sense.report.segments import MIN_DWELL_S, FocusSegment, attention_key
 from roxabi_sense.store import Event
-from roxabi_sense.util.time import parse_ts, to_z
+from roxabi_sense.util.time import parse_ts, to_z_precise
 
 
 @dataclass(frozen=True)
@@ -43,53 +43,38 @@ def _key(event: Event) -> tuple[str, ...]:
 
 
 def resolve_current_attention(
-    *, current: Event | None, quality: str, focus: list[Event], coverage: list[Event],
+    *, current: Event | None, quality: str, focus: FocusProjection, coverage: list[Event],
     attention: list[FocusSegment], away: list[AwaySegment], day_start: datetime,
-    now: datetime, raw_observation: str | None, proof_cuts: set[str] | None = None,
+    now: datetime, native_confirmed: datetime | None,
 ) -> CurrentAttention:
     """Resolve one run; coverage freshness validates now, never extends dwell."""
     if current is None or quality == "unknown" or parse_ts(current.ts) > now:
         return CurrentAttention(quality="unknown")
     fields = project_focus(current)
     key = _key(current)
-    focus = sorted((e for e in focus if parse_ts(e.ts) <= now), key=lambda e: (e.ts, e.id))
-    # A right-censor for an open, live proof caps historical dwell but is not
-    # an occurrence transition. The current event has already passed source
-    # validation; only its own synthetic clone may be omitted here.
-    live_cap: datetime | None = None
-    if len(focus) >= 2 and current is not None:
-        last, preceding = focus[-1], focus[-2]
-        current_context = current.payload.get("context")
-        preceding_context = preceding.payload.get("context")
-        if (proof_cuts and last.ts in proof_cuts and last.id == preceding.id
-                and isinstance(current_context, dict)
-                and current_context.get("source") == "tern"
-                and isinstance(preceding_context, dict)
-                and current_context.get("proof_ref") == preceding_context.get("proof_ref")
-                and _key(preceding) == key):
-            live_cap = parse_ts(last.ts)
-            focus = focus[:-1]
-    coverage = sorted((e for e in coverage if parse_ts(e.ts) <= now), key=lambda e: (e.ts, e.id))
+    records = [record for record in focus.records if record.at <= now]
+    coverage = sorted((e for e in coverage if parse_ts(e.ts) <= now),
+                      key=lambda e: (parse_ts(e.ts), e.id))
     context_floor = day_start
     previous_key: tuple[str, ...] | None = None
-    for event in focus:
-        event_key = _key(event)
-        if event_key != previous_key:
-            context_floor = max(day_start, parse_ts(event.ts))
+    for record in records:
+        event_key = _key(record.occurrence)
+        if event_key != previous_key or record.barrier:
+            context_floor = max(day_start, record.at)
         previous_key = event_key
     if previous_key != key:
         return CurrentAttention(quality=quality, app=fields.app, source=fields.source,
                                 window_id=fields.window_id)
 
-    confirmed: datetime | None = None
-    if quality == "observed":
-        try:
-            observation = json.loads(raw_observation or "{}")
-            confirmed = min(now, parse_ts(observation["last_observed_at"]))
-        except (KeyError, TypeError, ValueError):
-            return CurrentAttention(quality="unknown")
-    if live_cap is not None and confirmed is not None:
-        confirmed = min(confirmed, live_cap)
+    confirmed = native_confirmed if quality == "observed" else None
+    if quality == "observed" and confirmed is None:
+        return CurrentAttention(quality="unknown")
+    context = current.payload.get("context")
+    if isinstance(context, dict) and context.get("source") == "tern":
+        ref = context.get("proof_ref")
+        if isinstance(ref, str) and ref in focus.index.bounds:
+            cap = focus.index.bounds[ref][1]
+            confirmed = min(confirmed, cap) if confirmed is not None else cap
     end = confirmed if confirmed is not None else now
     floor = max(day_start, parse_ts(coverage[0].ts)) if coverage else day_start
     for index, event in enumerate(coverage):
@@ -99,7 +84,7 @@ def resolve_current_attention(
                 previous.payload.get("source"), previous.payload.get("state")
             ):
                 floor = max(floor, parse_ts(event.ts))
-    cuts = coverage_cuts(coverage, focus, now)
+    cuts = coverage_cuts(coverage, focus.raw, now)
     cuts.extend((parse_ts(a.start), parse_ts(a.end)) for a in away)
     blocked = False
     for begin, finish in cuts:
@@ -119,12 +104,13 @@ def resolve_current_attention(
             duration = (segment_end - segment_start).total_seconds()
             if duration >= MIN_DWELL_S:
                 if quality != "legacy_unverified" or (now - segment_end).total_seconds() <= 120:
-                    selected = CurrentStretch(to_z(segment_start), to_z(segment_end), duration)
+                    selected = CurrentStretch(
+                        to_z_precise(segment_start), to_z_precise(segment_end), duration)
             break
     return CurrentAttention(
         quality=quality, app=fields.app, source=fields.source, window_id=fields.window_id,
-        coverage_started_at=to_z(floor),
-        context_started_at=to_z(context_floor),
-        confirmed_through=to_z(confirmed) if confirmed is not None else None,
+        coverage_started_at=to_z_precise(floor),
+        context_started_at=to_z_precise(context_floor),
+        confirmed_through=to_z_precise(confirmed) if confirmed is not None else None,
         stretch=selected,
     )

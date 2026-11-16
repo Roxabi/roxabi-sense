@@ -185,7 +185,6 @@ def test_daemon_native_poll_continues_while_single_tern_job_is_slow_and_fails(
 def test_late_batch_completion_does_not_renew_exact_process_observation(
     tmp_path, monkeypatch
 ):
-    from roxabi_sense.collectors.tern.metadata import opaque
     from roxabi_sense.util.time import parse_ts
 
     source = tern_collector.TernCollector()
@@ -218,13 +217,20 @@ def test_late_batch_completion_does_not_renew_exact_process_observation(
     monkeypatch.setattr(tern_collector, "read_registrations", registrations)
     monkeypatch.setattr(runner, "inspect", lambda key, **_kwargs: _raw(key))
     monkeypatch.setattr(runner, "process", process)
-    scope = opaque("selected-scope", [source.endpoint, "B", 1, 2])
     with Store(tmp_path / "sense.db") as store:
         source.tick(store)
-        assert scope in _meta(store)["scopes"]
+        event = store.last_by_kind("tern_snapshot")
+        assert event is not None
+        process_ref = event.payload["windows"][0]["panes"][0]["process_proof_ref"]
+        assert any(item["proof_ref"] == process_ref for item in _meta(store)["scopes"].values())
         clock[0] += 1
         source.tick(store)
-        proof = _meta(store)["scopes"].get(scope)
+        event = store.last_by_kind("tern_snapshot")
+        assert event is not None
+        current_ref = event.payload["windows"][0]["panes"][0].get("process_proof_ref")
+        proof = next((item for item in _meta(store)["scopes"].values()
+                      if item["proof_ref"] == current_ref), None)
+        assert current_ref is None or proof is not None
         assert last_process[0] is not None
         assert clock[0] >= 105
         assert proof is None or parse_ts(proof["last_observed_at"]) <= last_process[0]
@@ -259,7 +265,9 @@ def test_discovery_without_registration_uses_explicit_route_for_work(tmp_path, m
         assert window["registered"] is False
         assert window["panes"][0]["cwd"] == "/repo"
         assert window["panes"][0]["omp_working"] is True
-        assert len(_meta(store)["scopes"]) == 1
+        assert len(_meta(store)["scopes"]) == 2
+        assert window["panes"][0]["pane_work_proof_ref"]
+        assert window["panes"][0]["process_proof_ref"]
 
 
 def test_late_worker_completion_cannot_reopen_expired_proof(tmp_path, monkeypatch):

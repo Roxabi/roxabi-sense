@@ -121,6 +121,37 @@ def test_unregister_during_wait_preserves_new_generation(runtime, monkeypatch):
     assert [r['token'] for r in bridge.read_registrations()] == new
 
 
+def test_delayed_renew_revoked_during_inspection_preserves_new_generation(runtime, monkeypatch):
+    root, clock = runtime
+    tokens = iter(('AAAAAAAAAAAAAAAA', 'BBBBBBBBBBBBBBBB'))
+    monkeypatch.setattr(bridge.secrets, 'token_urlsafe', lambda _: next(tokens))
+    old = bridge.request('register', {'schema': 1, 'window_key': 'x'})['token']
+    original_inspect = bridge.inspect
+    monkeypatch.setattr(
+        bridge.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    replacement = []
+
+    def inspect_during_revoke(key, *, deadline):
+        assert clock[0] == 105
+        assert deadline == 108
+        bridge.request('unregister', {'schema': 1, 'window_key': key, 'token': old})
+        monkeypatch.setattr(bridge, 'inspect', original_inspect)
+        new = bridge.request('register', {'schema': 1, 'window_key': key})['token']
+        path = root / 'roxabi-sense' / 'tern-bridge' / (new + '.json')
+        replacement.append((new, path.read_bytes()))
+        return original_inspect(key, deadline=deadline)
+
+    monkeypatch.setattr(bridge, 'inspect', inspect_during_revoke)
+    with pytest.raises((ValueError, FileNotFoundError)):
+        bridge.request('renew', {'schema': 1, 'window_key': 'x', 'token': old, 'delay_ms': 5000})
+    new, contents = replacement[0]
+    directory = root / 'roxabi-sense' / 'tern-bridge'
+    assert not (directory / (old + '.json')).exists()
+    assert (directory / (new + '.json')).read_bytes() == contents
+    assert [record['token'] for record in bridge.read_registrations()] == [new]
+
+
 def test_inspection_deadline_and_unlocked_revocation(runtime, monkeypatch):
     _, clock = runtime
     old = bridge.request('register', {'schema': 1, 'window_key': 'x'})['token']

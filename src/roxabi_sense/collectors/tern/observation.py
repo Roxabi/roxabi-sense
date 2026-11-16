@@ -8,7 +8,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from roxabi_sense.collectors.tern.metadata import opaque, selected_semantic, work_semantic
+from roxabi_sense.collectors.tern.metadata import opaque, pane_work_semantic, selected_semantic
 from roxabi_sense.store import Store
 from roxabi_sense.util.time import parse_ts, to_z
 
@@ -91,14 +91,15 @@ class ObservationWriter:
         old = meta.get("scopes")
         if not isinstance(old, dict):
             return []
-        return [{"proof_ref": item["proof_ref"], "confirmed_through": item["last_observed_at"]}
+        return [{"proof_ref": item["proof_ref"], "started_at": item["started_at"],
+                 "confirmed_through": item["last_observed_at"]}
                 for item in old.values() if isinstance(item, dict)
                 and isinstance(item.get("proof_ref"), str)
+                and isinstance(item.get("started_at"), str)
                 and isinstance(item.get("last_observed_at"), str)]
 
     def publish(self, store: Store, windows: list[dict[str, Any]] | None) -> int:
         now = datetime.now(UTC)
-        stamp = to_z(now)
         clock = _clock()
         closed = self._initialize(store)
         healthy = windows is not None
@@ -108,11 +109,16 @@ class ObservationWriter:
                 route = [window.get("endpoint_ref"), window["window_key"],
                          window["conn"], window["since"]]
                 for pane in window["panes"]:
-                    work_scope = opaque("work-scope", pane["pane_ref"])
-                    candidates[work_scope] = (
-                        opaque("work", work_semantic(pane)),
-                        pane.get("_work_sample", _MISSING), None,
+                    candidates[opaque("pane-work-scope", pane["pane_ref"])] = (
+                        opaque("pane-work", pane_work_semantic(pane)),
+                        pane.get("_pane_work_sample", _MISSING), None,
                     )
+                    sample = pane.get("_process_sample", _MISSING)
+                    if pane.get("omp_foreground") is not None and sample is not None:
+                        candidates[opaque("process-scope", pane["pane_ref"])] = (
+                            opaque("process", pane["pane_ref"], pane["omp_foreground"]),
+                            sample, None,
+                        )
                     if pane.get("selected") and window.get("registered") is True:
                         scope = opaque("selected-scope", route)
                         expiry = window.get("_registration_expires_boot")
@@ -156,6 +162,7 @@ class ObservationWriter:
                 if not healthy or candidate is None:
                     self.watermarks[scope] = max(clock, self.watermarks.get(scope, 0.0))
                 closed.append({"proof_ref": proof["proof_ref"],
+                               "started_at": proof["started_at"],
                                "confirmed_through": proof["last_observed_at"]})
             else:
                 next_scopes[scope] = proof
@@ -180,18 +187,24 @@ class ObservationWriter:
         for window in clean_windows:
             panes = []
             for pane in window["panes"]:
-                proof = next_scopes.get(opaque("work-scope", pane["pane_ref"]))
-                panes.append({**pane, **({"work_proof_ref": proof["proof_ref"]} if proof else {})})
+                refs = {}
+                for kind in ("pane-work", "process"):
+                    proof = next_scopes.get(opaque(f"{kind}-scope", pane["pane_ref"]))
+                    if proof:
+                        refs[f"{kind.replace('-', '_')}_proof_ref"] = proof["proof_ref"]
+                panes.append({**pane, **refs})
             published_windows.append({**window, "panes": panes})
         fingerprint = _json({"healthy": healthy, "windows": published_windows})
         wrote = 0
         with store.batch():
             if fingerprint != self.fingerprint or closed or self.snapshot_id is None:
+                published_at = datetime.now(UTC)
                 self.snapshot_id = store.append("tern_snapshot", {
                     "version": 1, "run_ref": self.run_ref,
                     "state": "observed" if healthy else "unknown",
                     "windows": published_windows, "closed": closed,
-                }, ts=stamp)
+                    "_published_at": _sample_stamp(published_at),
+                }, ts=to_z(published_at))
                 self.fingerprint = fingerprint
                 wrote = 1
             store.set_meta("tern_observation", _json({"run_ref": self.run_ref,
@@ -211,6 +224,7 @@ class ObservationWriter:
         for scope in expired:
             self.watermarks[scope] = max(clock, self.watermarks.get(scope, 0.0))
         closed = [{"proof_ref": self.scopes[scope]["proof_ref"],
+                   "started_at": self.scopes[scope]["started_at"],
                    "confirmed_through": self.scopes[scope]["last_observed_at"]}
                   for scope in sorted(expired)]
         remaining = {scope: proof for scope, proof in self.scopes.items() if scope not in expired}
@@ -218,16 +232,20 @@ class ObservationWriter:
         for window in self.public_windows:
             panes = []
             for pane in window["panes"]:
-                if opaque("work-scope", pane["pane_ref"]) in expired:
-                    pane = {key: value for key, value in pane.items() if key != "work_proof_ref"}
+                for kind in ("pane-work", "process"):
+                    if opaque(f"{kind}-scope", pane["pane_ref"]) in expired:
+                        key = f"{kind.replace('-', '_')}_proof_ref"
+                        pane = {name: value for name, value in pane.items() if name != key}
                 panes.append(pane)
             windows.append({**window, "panes": panes})
         with store.batch():
+            published_at = datetime.now(UTC)
             snapshot_id = store.append("tern_snapshot", {
                 "version": 1, "run_ref": self.run_ref,
                 "state": "observed" if self.healthy else "unknown",
                 "windows": windows, "closed": closed,
-            }, ts=to_z(datetime.now(UTC)))
+                "_published_at": _sample_stamp(published_at),
+            }, ts=to_z(published_at))
             store.set_meta("tern_observation", _json({"run_ref": self.run_ref,
                 "snapshot_id": snapshot_id, "healthy": self.healthy, "scopes": remaining}))
         self.snapshot_id = snapshot_id

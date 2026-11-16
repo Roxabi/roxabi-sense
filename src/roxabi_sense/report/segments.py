@@ -18,8 +18,9 @@ from typing import Any
 from roxabi_sense.report.away import AwaySegment
 from roxabi_sense.report.dwell.coverage import coverage_cuts, identity_cuts
 from roxabi_sense.report.dwell.projection import project_focus
+from roxabi_sense.report.dwell.tern_proofs import FocusProjection
 from roxabi_sense.store import Event
-from roxabi_sense.util.time import parse_ts, to_z
+from roxabi_sense.util.time import parse_ts, to_z_precise
 
 MIN_DWELL_S = 3.0  # ignore micro-focus flickers (fine title segments)
 _APP_ALIASES: dict[str, str] = {
@@ -173,26 +174,31 @@ def _prefer_meta(base: FocusSegment, other: FocusSegment) -> FocusSegment:
 
 
 def focus_segments(
-    focus_events: list[Event],
+    focus_events: list[Event] | FocusProjection,
     away: list[AwaySegment],
     *,
     horizon: datetime,
     coverage_events: list[Event] | None = None,
 ) -> list[FocusSegment]:
     """Attribute focus dwell (fine grain: app+title), cutting out away gaps."""
-    if not focus_events:
+    if isinstance(focus_events, FocusProjection):
+        observations = [(r.at, r.history) for r in focus_events.records if r.history_eligible]
+        raw_events = focus_events.raw
+    else:
+        observations = [(parse_ts(e.ts), e) for e in focus_events]
+        raw_events = focus_events
+    if not observations:
         return []
     collapsed: list[tuple[datetime, Any]] = []
-    for e in focus_events:
+    for t, e in observations:
         fields = project_focus(e)
-        t = parse_ts(e.ts)
         if collapsed and collapsed[-1][1] == fields:
             continue
         collapsed.append((t, fields))
 
     away_ranges = [(parse_ts(a.start), parse_ts(a.end)) for a in away]
-    coverage = sorted(coverage_events or [], key=lambda e: (e.ts, e.id))
-    away_ranges.extend(coverage_cuts(coverage, focus_events, horizon))
+    coverage = sorted(coverage_events or [], key=lambda e: (parse_ts(e.ts), e.id))
+    away_ranges.extend(coverage_cuts(coverage, raw_events, horizon))
     segs: list[FocusSegment] = []
     for i, row in enumerate(collapsed):
         t0, fields = row
@@ -208,8 +214,8 @@ def focus_segments(
                 continue
             segs.append(
                 FocusSegment(
-                    start=to_z(a0),
-                    end=to_z(a1),
+                    start=to_z_precise(a0),
+                    end=to_z_precise(a1),
                     duration_s=dur,
                     app=app,
                     title=title,

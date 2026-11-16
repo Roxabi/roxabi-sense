@@ -10,7 +10,8 @@ def window():
     return {
         "window_key": "", "conn": 1, "since": 2, "registered": True, "shown_pane": "pane",
         "panes": [
-            {"pane_ref": "pane", "selected": True, "pane_working": True, "omp_foreground": True},
+            {"pane_ref": "pane", "selected": True, "pane_working": True,
+             "omp_foreground": True, "omp_working": True},
         ],
     }
 
@@ -51,6 +52,8 @@ def test_unchanged_observations_renew_only_meta_and_gap_closes_last_observation(
         assert event is not None
         assert {x["confirmed_through"] for x in event.payload["closed"]} == {
             x["last_observed_at"] for x in renewed["scopes"].values()}
+        assert {(x["proof_ref"], x["started_at"]) for x in event.payload["closed"]} == {
+            (x["proof_ref"], x["started_at"]) for x in renewed["scopes"].values()}
 
 
 def test_background_change_preserves_selected_proof(tmp_path, monkeypatch):
@@ -67,7 +70,7 @@ def test_background_change_preserves_selected_proof(tmp_path, monkeypatch):
         assert all(after[key]["proof_ref"] == value["proof_ref"] for key, value in prior.items())
 
 
-def test_same_pane_views_share_one_work_proof(tmp_path, monkeypatch):
+def test_same_pane_views_share_independent_work_proofs(tmp_path, monkeypatch):
     monkeypatch.setattr(observation, "_clock", lambda: 100.0)
     writer = observation.ObservationWriter()
     first = window()
@@ -80,7 +83,9 @@ def test_same_pane_views_share_one_work_proof(tmp_path, monkeypatch):
         event = store.last_by_kind("tern_snapshot")
         assert event is not None
         a, b = event.payload["windows"]
-        assert a["panes"][0]["work_proof_ref"] == b["panes"][0]["work_proof_ref"]
+        for key in ("pane_work_proof_ref", "process_proof_ref"):
+            assert a["panes"][0][key] == b["panes"][0][key]
+        assert a["panes"][0]["pane_work_proof_ref"] != a["panes"][0]["process_proof_ref"]
 
 
 def test_lease_renewals_do_not_create_events_but_expiry_breaks_proof(tmp_path, monkeypatch):
@@ -128,3 +133,5 @@ def test_source_failure_closes_proofs_without_raising(tmp_path, monkeypatch):
         assert {x["confirmed_through"] for x in event.payload["closed"]} == {
             x["last_observed_at"] for x in before["scopes"].values()
         }
+        assert {(x["proof_ref"], x["started_at"]) for x in event.payload["closed"]} == {
+            (x["proof_ref"], x["started_at"]) for x in before["scopes"].values()}

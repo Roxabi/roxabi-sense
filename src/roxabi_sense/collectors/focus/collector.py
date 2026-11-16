@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from roxabi_sense.collectors.focus.coverage import CoverageWriter
@@ -18,6 +19,7 @@ from roxabi_sense.util.agent_link import find_agent_link
 from roxabi_sense.util.mux import list_mux_agent_panes
 from roxabi_sense.util.proc import children_map, resolve_app_name
 from roxabi_sense.util.session_registry import load_all_sessions
+from roxabi_sense.util.time import to_z_precise
 from roxabi_sense.util.titles import normalize_title, sanitize_display
 
 KIND = "focus"
@@ -26,6 +28,11 @@ TickMode = Literal["full", "focus", "desktop"]
 
 # Back-compat alias used by tests / older imports
 WindowInfo = FocusWindow
+
+
+def _observed_at() -> str:
+    """Timestamp actual focus publication without changing SQLite's coarse ordering."""
+    return to_z_precise(datetime.now(UTC))
 
 
 def _agent_key(agent: dict[str, Any] | None) -> str:
@@ -205,6 +212,8 @@ class FocusCollector:
             body["agent"] = active.agent
         if active.context:
             body["context"] = active.context
+        body.update(self._coverage.native_evidence(self._focus_probe, source, active))
+        body["_observed_at"] = _observed_at()
         store.append(KIND, body)
         return 1
 

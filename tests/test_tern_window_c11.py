@@ -1,4 +1,5 @@
 """Exercise the packaged window resource with deterministic SDK doubles."""
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -88,7 +89,9 @@ if scenario == "token" then response.token = "bad!" end
 if scenario == "late" then now = 10000 end
 if scenario == "negative" then now = -1 end
 complete(1, result, context)
-if scenario ~= "success" and scenario ~= "renew_mismatch" and scenario ~= "unload" then
+if scenario ~= "success" and scenario ~= "renew_mismatch" and scenario ~= "unload"
+    and scenario ~= "renew_nil" and scenario ~= "renew_late"
+    and scenario ~= "retire_recovery" then
     assert(#calls == 1 and title({}) == nil and refreshes == 2)
     if scenario == "stdout_large" then assert(decodes == 0) end
     return
@@ -107,10 +110,34 @@ if scenario == "unload" then
     return
 end
 if scenario == "renew_mismatch" then response.token = string.rep("b", 16) end
-now = 5000
-complete(2, nil, cx(""))
-if scenario == "renew_mismatch" then
+now = scenario == "renew_late" and 10000 or 5000
+local renew_context = cx("")
+if scenario == "renew_nil" or scenario == "retire_recovery" then renew_context = nil end
+complete(2, nil, renew_context)
+if scenario == "renew_mismatch" or scenario == "renew_nil"
+    or scenario == "renew_late" or scenario == "retire_recovery" then
+    -- In recovery scenario reject the callback after successful helper work.
+    -- Its known token remains the sole cleanup authority until unload.
     assert(#calls == 2 and title({}) == nil)
+    timers[1][2](cx(""))
+    assert(#calls == 2)
+    events.unload(nil)
+    events.unload(nil)
+    assert(#calls == 3 and calls[3].argv[3] == "unregister")
+    assert(calls[3].opts.stdin.token == opaque and calls[3].opts.stdin.window_key == "")
+    assert(calls[3].opts.stdin.delay_ms == 0 and calls[3].opts.timeout_ms == 2000)
+    calls[3].callback({status = 0}, cx(""))
+    timers[1][2](cx(""))
+    assert(#calls == 3 and title({}) == nil)
+    if scenario == "retire_recovery" then
+        response.token = string.rep("b", 16)
+        assert(loadfile(resource))()
+        timers[2][2](cx(""))
+        assert(#calls == 4 and calls[4].argv[3] == "register")
+        complete(4, nil, cx(""))
+        assert(title({}) == "[sense:t1:" .. response.token .. "] Tern")
+        assert(#calls == 5 and calls[5].argv[3] == "renew")
+    end
 else
     assert(#calls == 3 and calls[3].argv[3] == "renew")
     assert(calls[3].opts.stdin.delay_ms == 5000)
@@ -121,10 +148,13 @@ end
 @pytest.mark.parametrize("scenario", [
     "success", "unload", "unload_register", "encode", "spawn", "nil_context",
     "wrong_key", "context_error", "status", "timeout", "stdout_type", "stdout_large",
-    "json", "schema", "token", "late", "negative", "renew_mismatch",
+    "json", "schema", "token", "late", "negative", "renew_mismatch", "renew_nil",
+    "renew_late", "retire_recovery",
 ])
 def test_window_callback_contract(tmp_path, scenario):
     if LUA is None:
+        if os.environ.get("CI", "").lower() == "true":
+            pytest.fail("CI requires a Lua interpreter for the packaged resource harness")
         pytest.skip("Lua interpreter unavailable for packaged resource harness")
     script = tmp_path / "window_harness.lua"
     script.write_text(HARNESS)

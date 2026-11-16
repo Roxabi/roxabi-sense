@@ -93,6 +93,16 @@ def resolve_context(
                pane.get("session_context_ref"), pane.get("repo_ref")),
                "repo_ref": pane.get("repo_ref"), "cwd": pane.get("cwd"),
                "proof_ref": proof["proof_ref"]}
-    if pane.get("omp_foreground") is True:
-        context["agent"] = {"agent": "omp", "match": "tern_foreground"}
+    process = scopes.get(opaque("process-scope", pane["pane_ref"])) if isinstance(
+        scopes, dict
+    ) else None
+    if pane.get("omp_foreground") is True and isinstance(process, dict):
+        try:
+            if (process.get("semantic_ref") == opaque("process", pane["pane_ref"], True)
+                    and isinstance(process.get("proof_ref"), str)
+                    and parse_ts(process["fresh_until"]) >= now):
+                context["agent"] = {"agent": "omp", "match": "tern_foreground"}
+                context["agent_proof_ref"] = process["proof_ref"]
+        except (KeyError, ValueError, TypeError):
+            pass
     return context, None

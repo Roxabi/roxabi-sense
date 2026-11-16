@@ -47,7 +47,13 @@ class TernCollector:
         self._route_hints: list[dict[str, Any]] = []
 
     def tick(self, store: Store) -> int:
+        self.start(store)
         return self.publish(store, self.collect(threading.Event()))
+
+    def start(self, store: Store) -> None:
+        """Fence prior durable ownership before acquisition or native composition."""
+        if not self.writer.initialized:
+            self.writer.publish(store, None)
 
     def collect(self, cancel: threading.Event) -> list[dict[str, Any]] | None:
         try:
@@ -124,7 +130,7 @@ class TernCollector:
                 raise runner.TernUnavailable("pane observation changed")
             structural = _sample(started, _stamp())
             for pane in window["panes"]:
-                pane["_work_sample"] = structural
+                pane["_pane_work_sample"] = structural
                 if pane["selected"]:
                     pane["_selected_sample"] = structural
             windows.append(window)
@@ -153,13 +159,7 @@ class TernCollector:
                         pane["omp_working"] = (
                             pane["pane_working"] if pane["omp_foreground"] else None
                         )
-                    sample = _sample(started, ended)
-                    if pane["selected"]:
-                        pane["_selected_sample"] = _merge_samples(
-                            pane["_selected_sample"], sample
-                        )
-                    if pane["pane_working"] is not False:
-                        pane["_work_sample"] = _merge_samples(pane["_work_sample"], sample)
+                    pane["_process_sample"] = _sample(started, ended)
                 except runner.TernUnavailable:
                     continue
         budget()
@@ -168,8 +168,7 @@ class TernCollector:
             if final_routes != routes:
                 raise runner.TernUnavailable("window clients changed")
 
-        # Shared pane views describe one work scope; conflicting work samples
-        # become unknown without discarding independently valid selected context.
+        # Shared views reconcile structural and process evidence independently.
         shared: dict[str, list[dict[str, Any]]] = {}
         for window in windows:
             for pane in window["panes"]:
@@ -178,12 +177,20 @@ class TernCollector:
             if len({pane["repo_ref"] for pane in panes}) != 1:
                 raise runner.TernUnavailable("conflicting pane identity")
             working = {pane["pane_working"] for pane in panes}
-            omp_working = {pane["omp_working"] for pane in panes}
-            sample = _merge_samples(*(pane["_work_sample"] for pane in panes))
+            pane_sample = _merge_samples(*(pane["_pane_work_sample"] for pane in panes))
+            sampled = [pane for pane in panes if pane.get("_process_sample") is not None]
+            foreground = {pane["omp_foreground"] for pane in sampled}
+            process_sample = (_merge_samples(*(pane["_process_sample"] for pane in sampled))
+                              if sampled and len(foreground) == 1 else None)
+            process_value = next(iter(foreground)) if process_sample is not None else None
             for pane in panes:
                 pane["pane_working"] = next(iter(working)) if len(working) == 1 else None
-                pane["omp_working"] = next(iter(omp_working)) if len(omp_working) == 1 else None
-                pane["_work_sample"] = sample
+                pane["omp_foreground"] = process_value
+                pane["omp_working"] = (pane["pane_working"]
+                                       if process_value is True else
+                                       False if pane["pane_working"] is False else None)
+                pane["_pane_work_sample"] = pane_sample
+                pane["_process_sample"] = process_sample
 
         registrations = read_registrations()
         _, observed_boot = boot_identity()

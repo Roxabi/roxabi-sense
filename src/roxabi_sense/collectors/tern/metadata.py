@@ -25,13 +25,13 @@ def endpoint_ref() -> str:
 def selected_semantic(pane: dict[str, Any]) -> dict[str, Any]:
     """Context proof excludes independently changing work-state evidence."""
     return {key: pane.get(key) for key in (
-        "pane_ref", "host_ref", "cwd", "repo_ref", "session_context_ref", "omp_foreground"
+        "pane_ref", "host_ref", "cwd", "repo_ref", "session_context_ref"
     )}
 
-def work_semantic(pane: dict[str, Any]) -> dict[str, Any]:
-    return {key: pane.get(key) for key in (
-        "pane_ref", "repo_ref", "pane_working", "omp_working"
-    )}
+def pane_work_semantic(pane: dict[str, Any]) -> dict[str, Any]:
+    return {key: pane.get(key) for key in ("pane_ref", "repo_ref", "pane_working")}
+
+
 
 def _id(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None

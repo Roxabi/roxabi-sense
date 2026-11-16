@@ -1,6 +1,7 @@
 -- Only opaque window routing metadata is sent to the local helper.
 local token = nil
 local key = nil
+local visible = false
 local stopped = false
 local inflight = false
 local executable = nil
@@ -13,14 +14,13 @@ if ok and type(config) == "table" and type(config.executable) == "string" then
 end
 
 tern.chrome.window_title(function(win)
-    if not token then return nil end
+    if not visible then return nil end
     local title = win.tab or win.space or "Tern"
     return "[sense:t1:" .. token .. "] " .. title
 end)
 
 local function clear()
-    token = nil
-    key = nil
+    visible = false
     tern.chrome.refresh()
 end
 
@@ -71,6 +71,7 @@ dispatch = function(cx, prior)
             end
             token = response.token
             key = submitted
+            visible = true
             tern.chrome.refresh()
             dispatch(freshcx, token)
         end)
@@ -82,7 +83,10 @@ dispatch = function(cx, prior)
 end
 
 local function tick(cx)
-    dispatch(cx, token)
+    -- A failed renew retains its known token for terminal unload cleanup;
+    -- never start another generation while that authority is still held.
+    if token then return end
+    dispatch(cx, nil)
 end
 
 tern.on("unload", function(_cx)

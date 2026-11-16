@@ -5,19 +5,18 @@ Text renderers live in ``report.render.day``.
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
-from itertools import pairwise
 from typing import Any
 
 from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
 from roxabi_sense.report.dwell.aggregate import hour_apps, top_titles
+from roxabi_sense.report.dwell.coverage import native_confirmation
 from roxabi_sense.report.dwell.current_attention import CurrentAttention, resolve_current_attention
 from roxabi_sense.report.dwell.repos import HERDR_KIND, AgentRepoTime, attribute_repos, repo_label
 from roxabi_sense.report.dwell.stays import TerminalStayStats, terminal_stay_stats
-from roxabi_sense.report.dwell.tern_proofs import normalize_focus
+from roxabi_sense.report.dwell.tern_proofs import project_timeline, switch_metrics
 from roxabi_sense.report.dwell.tern_work import TernWork, add_tern_work, summarize_tern_work
 from roxabi_sense.report.enrich import (
     AgentSessionRow,
@@ -31,7 +30,6 @@ from roxabi_sense.report.meeting_fidelity import meeting_fidelity_from_events
 from roxabi_sense.report.meeting_sessions import MeetingSession, meeting_sessions
 from roxabi_sense.report.segments import (
     FocusSegment,
-    attention_key,
     attention_segments,
     focus_segments,
     horizon_dt,
@@ -39,7 +37,7 @@ from roxabi_sense.report.segments import (
 )
 from roxabi_sense.report.status import current_focus, status_snapshot
 from roxabi_sense.report.top_apps import AppDwell, session_shape, top_apps
-from roxabi_sense.store import Event, Store
+from roxabi_sense.store import Store
 from roxabi_sense.util.time import parse_ts, to_z
 
 _DAY_EVENT_LIMIT = 50_000
@@ -147,6 +145,7 @@ def compile_day_recap(
     if prior_coverage is not None:
         coverage.insert(0, prior_coverage)
     prior_focus = store.last_by_kind_before("focus", start)
+    native_focus = ([prior_focus] if prior_focus is not None else []) + focus_ev
     raw_focus = list(focus_ev)
     if prior_focus is not None:
         carried = replace(prior_focus, ts=start)
@@ -160,46 +159,21 @@ def compile_day_recap(
             and prior_focus.payload.get("window_id") == prior_coverage.payload.get("window_id")
         ):
             focus_ev.insert(0, carried)
-    raw_coverage = list(coverage)
-    latest_coverage = coverage[-1] if coverage else None
     overall_coverage = store.last_by_kind("focus_coverage")
     raw_observation = store.get_meta("focus_observation")
-    if (
-        latest_coverage is not None
-        and overall_coverage is not None
-        and latest_coverage.id == overall_coverage.id
-        and latest_coverage.payload.get("state") == "observed"
-    ):
-        try:
-            observation = json.loads(raw_observation) if raw_observation else {}
-            observed_end = (
-                observation.get("last_observed_at") if isinstance(observation, dict) else None
-            )
-            if (
-                not isinstance(observation, dict)
-                or observation.get("coverage_id") != latest_coverage.id
-                or observation.get("source") != latest_coverage.payload.get("source")
-                or observation.get("window_id") != latest_coverage.payload.get("window_id")
-                or not isinstance(observed_end, str)
-            ):
-                observed_end = latest_coverage.ts
-            parse_ts(observed_end)
-        except (TypeError, ValueError):
-            observed_end = latest_coverage.ts
-        coverage.append(Event(
-            id=latest_coverage.id + 1, ts=max(latest_coverage.ts, observed_end),
-            kind="focus_coverage",
-            payload={"state": "unknown", "source": latest_coverage.payload.get("source")},
-        ))
+    native = native_confirmation(
+        coverage, native_focus, raw_observation,
+        overall_coverage.id if overall_coverage is not None else None, horizon,
+    )
+    coverage = native.history
     snapshots = list(store.iter_kind_before(
         "tern_snapshot", to_z(max(horizon, datetime.now(UTC)) + timedelta(seconds=1))
     ))
     tern_meta = store.get_meta("tern_observation")
-    context_cuts: set[str] = set()
-    focus_ev, proof_cuts = normalize_focus(
-        focus_ev, snapshots, tern_meta, horizon, context_cuts=context_cuts)
-    raw_focus, raw_proof_cuts = normalize_focus(raw_focus, snapshots, tern_meta, horizon)
-    segments = focus_segments(focus_ev, away, horizon=horizon, coverage_events=coverage)
+    projection = project_timeline(
+        raw_focus, snapshots, tern_meta, horizon, history_ids={event.id for event in focus_ev},
+        source_times={prior_focus.id: prior_focus.ts} if prior_focus else None)
+    segments = focus_segments(projection, away, horizon=horizon, coverage_events=coverage)
     attn = attention_segments(segments)
     stays = terminal_stay_stats(attn)
     apps = top_apps(segments, limit=20)
@@ -212,7 +186,7 @@ def compile_day_recap(
         prior=store.last_by_kind_before(HERDR_KIND, start),
     )
     repos = add_tern_work(repos, snapshots, tern_meta, segments, parse_ts(start), horizon,
-                          coverage=raw_coverage)
+                          coverage=coverage)
     modes = {a.mode for a in away}
     idle_mode = _idle_mode(modes, bool(away))
     pure_away = [a for a in away if a.presence != "meeting"]
@@ -224,11 +198,10 @@ def compile_day_recap(
         events,
         focus_backend=store.get_meta("focus_backend"),
     )
-    title_sw = sum(a.end == b.start and b.start not in proof_cuts for a, b in pairwise(segments))
+    title_sw, ctx_sw = switch_metrics(projection, segments, attn)
     app_sw = switch_count(segments, key=lambda s: s.app)
-    ctx_sw = sum(a.end == b.start and b.start not in context_cuts
-                 and attention_key(a) != attention_key(b) for a, b in pairwise(attn))
-    active_focus, active_quality = current_focus(status_snapshot(store), now=horizon)
+    active_focus, active_quality = current_focus(
+        status_snapshot(store), now=horizon, proof_index=projection.index)
     if active_focus is not None:
         context = active_focus.payload.get("context")
         if isinstance(context, dict) and context.get("source") == "tern":
@@ -239,9 +212,9 @@ def compile_day_recap(
         elif active_focus.payload.get("app") == "so.stencil.tern":
             repos = replace(repos, focused_repo_now=None)
     current_attention = resolve_current_attention(
-        current=active_focus, quality=active_quality, focus=raw_focus, coverage=raw_coverage,
-        attention=attn, away=away, day_start=parse_ts(start), now=horizon,
-        raw_observation=raw_observation, proof_cuts=raw_proof_cuts,
+        current=active_focus, quality=active_quality, focus=projection,
+        coverage=native.transitions, attention=attn, away=away, day_start=parse_ts(start),
+        now=horizon, native_confirmed=native.confirmed_through,
     )
     return DayRecap(
         day=day_label,
@@ -286,7 +259,7 @@ def compile_day_recap(
         ),
         current_attention=current_attention,
         tern_work=summarize_tern_work(snapshots, tern_meta, segments, parse_ts(start), horizon,
-                                      coverage=raw_coverage),
+                                      coverage=coverage),
     )
 
 

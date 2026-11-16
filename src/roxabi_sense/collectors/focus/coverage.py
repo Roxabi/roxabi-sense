@@ -8,7 +8,7 @@ from typing import Any
 from roxabi_sense.collectors.focus.probes.cosmic import CosmicFocusProbe
 from roxabi_sense.collectors.focus.protocol import FocusWindow
 from roxabi_sense.store import Store
-from roxabi_sense.util.time import to_z, utc_now_z
+from roxabi_sense.util.time import to_z, to_z_precise, utc_now_z
 
 
 class CoverageWriter:
@@ -18,6 +18,27 @@ class CoverageWriter:
         self.last_observed: str | None = None
         self.observed_start: str | None = None
         self.initialized = False
+
+    def native_evidence(
+        self, probe: object, source: str, active: FocusWindow,
+    ) -> dict[str, Any]:
+        wire = probe.wire if isinstance(probe, CosmicFocusProbe) else None
+        if (source == "cosmic" and isinstance(probe, CosmicFocusProbe)
+                and probe.reason == "observed" and probe.observed_at is not None
+                and wire is not None and wire.ready and not wire.dirty
+                and getattr(wire, "ack_observed_at", None) == probe.observed_at
+                and getattr(wire, "ack_at", 0.0) >= getattr(wire, "commit_at", float("inf"))
+                and sum(1 for handle in wire.handles.values()
+                        if handle.get("committed", {}).get("active")) == 1
+                and sum(1 for handle in wire.handles.values()
+                        if handle.get("committed", {}).get("active")
+                        and f"{wire.epoch}:{handle['committed'].get('identifier')}"
+                        == active.window_id) == 1
+                and active.window_id is not None and self.event_id is not None
+                and self.current == ("observed", active.window_id, "observed")):
+            return {"_native_observed_at": to_z_precise(probe.observed_at),
+                    "_native_coverage_id": self.event_id}
+        return {}
 
     def initialize(self, store: Store) -> int:
         if self.initialized:

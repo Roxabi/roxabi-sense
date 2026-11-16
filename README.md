@@ -287,6 +287,9 @@ cd roxabi-sense && uv sync --extra mcp
 uv run sense status
 ```
 
+The Tern companion's behavioral tests require a Lua 5.4 executable on PATH.
+They are optional locally when Lua is absent; CI requires and runs them.
+
 No Podman required on the laptop for V1. M₂ may use the same user unit. M₁ host-sensor path (services snapshot only) is a later collector, not a Quadlet of this whole app.
 
 ---

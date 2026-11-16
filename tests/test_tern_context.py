@@ -20,9 +20,17 @@ def evidence():
     window = {**route, "shown_pane": "pane", "panes": [pane]}
     snapshot = {"run_ref": "run", "state": "observed", "windows": [window]}
     scope = opaque("selected-scope", ["endpoint", "", 1, 2])
-    observation = {"run_ref": "run", "healthy": True, "scopes": {scope: {
-        "semantic_ref": opaque("selected", selected_semantic(pane)), "proof_ref": "proof",
-        "fresh_until": to_z(NOW + timedelta(seconds=10))}}}
+    process_scope = opaque("process-scope", "pane")
+    observation = {"run_ref": "run", "healthy": True, "scopes": {
+        scope: {
+            "semantic_ref": opaque("selected", selected_semantic(pane)), "proof_ref": "proof",
+            "fresh_until": to_z(NOW + timedelta(seconds=10)),
+        },
+        process_scope: {
+            "semantic_ref": opaque("process", "pane", True), "proof_ref": "process-proof",
+            "fresh_until": to_z(NOW + timedelta(seconds=10)),
+        },
+    }}
     registration = {**route, "token": TOKEN, "boot_id": "boot", "expires_boottime": 20}
     return native, snapshot, observation, registration
 
@@ -39,7 +47,17 @@ def test_empty_route_resolves_and_marker_is_removed_before_title_cleanup():
     assert reason is None
     assert context is not None
     assert context["agent"] == {"agent": "omp", "match": "tern_foreground"}
+    assert context["agent_proof_ref"] == "process-proof"
     assert split_marker(native.title) == (TOKEN, "Tern")
+
+
+def test_missing_process_proof_preserves_selected_context_without_agent():
+    native, snapshot, observation, reg = evidence()
+    del observation["scopes"][opaque("process-scope", "pane")]
+    context, reason = resolve(native, [native], snapshot, observation, [reg])
+    assert reason is None
+    assert context is not None and context["proof_ref"] == "proof"
+    assert "agent" not in context and "agent_proof_ref" not in context
 
 
 def test_duplicate_marker_stale_lease_or_wrong_client_fail_closed():

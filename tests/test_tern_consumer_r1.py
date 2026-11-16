@@ -13,7 +13,7 @@ from roxabi_sense.collectors.focus.probes.cosmic import CosmicFocusProbe
 from roxabi_sense.collectors.focus.protocol import FocusWindow
 from roxabi_sense.collectors.tern import observation
 from roxabi_sense.collectors.tern.collector import TernCollector
-from roxabi_sense.collectors.tern.metadata import work_semantic
+from roxabi_sense.collectors.tern.metadata import pane_work_semantic
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.daemon import collect_once
 from roxabi_sense.report.care import compile_care_brief
@@ -33,9 +33,11 @@ class Harness:
         self.boot = 100.0
         self.writer = observation.ObservationWriter(freshness_s=10)
         self.probe = CosmicFocusProbe(env={})
-        monkeypatch.setattr(
-            self.probe, "wire", SimpleNamespace(ready=True, dirty=False, handles={1: {}})
-        )
+        monkeypatch.setattr(self.probe, "wire", SimpleNamespace(
+            ready=True, dirty=False, epoch="epoch",
+            handles={1: {"committed": {"identifier": "window", "active": True}}},
+            commit_at=1.0, ack_at=1.0, ack_observed_at=None,
+        ))
         self.probe.reason = "observed"
         self.collector = FocusCollector(focus_probe=self.probe, sessions_loader=lambda: [])
         self.pane = "pane-a"
@@ -51,6 +53,10 @@ class Harness:
         monkeypatch.setattr(observation, "datetime", Clock)
         monkeypatch.setattr(observation, "_clock", lambda: self.boot)
         monkeypatch.setattr("roxabi_sense.collectors.focus.tern.datetime", Clock)
+        monkeypatch.setattr(
+            "roxabi_sense.collectors.focus.collector._observed_at",
+            lambda: self.now.isoformat().replace("+00:00", "Z"),
+        )
         monkeypatch.setattr("roxabi_sense.store.db.utc_now_z", lambda: to_z(self.now))
         monkeypatch.setattr(
             "roxabi_sense.collectors.focus.coverage.utc_now_z", lambda: to_z(self.now)
@@ -84,6 +90,8 @@ class Harness:
 
     def focus(self):
         self.probe.observed_at = self.now
+        assert self.probe.wire is not None
+        self.probe.wire.ack_observed_at = self.now
         native = FocusWindow(APP, f"[sense:t1:{TOKEN}] {self.title}", True,
                              window_id="epoch:window")
         self.collector.apply(self.store, [native], mode="focus", source="cosmic")
@@ -268,9 +276,12 @@ def test_shared_idle_pane_collects_both_views_with_selected_foreground(tmp_path,
     windows = {w["window_key"]: w for w in snapshot.payload["windows"]}
     a, b = windows[""]["panes"][0], windows["other"]["panes"][0]
     assert a["pane_ref"] == b["pane_ref"]
-    assert a["omp_foreground"] is True
-    assert b["omp_foreground"] is None
-    assert work_semantic(a) == work_semantic(b)
+    assert a["selected"] is True and b["selected"] is False
+    assert a["omp_foreground"] is b["omp_foreground"] is True
+    assert pane_work_semantic(a) == pane_work_semantic(b)
+    assert a["pane_working"] is b["pane_working"] is False
+    assert a["omp_working"] is b["omp_working"] is False
+    assert a["process_proof_ref"] == b["process_proof_ref"]
 
 
 def test_concurrent_once_preserves_owned_tern_proof(setup, monkeypatch):

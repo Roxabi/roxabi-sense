@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 from roxabi_sense.report.dwell.current_attention import _key
 from roxabi_sense.report.dwell.repos import RepoAttribution, attribute_repos
-from roxabi_sense.report.dwell.tern_proofs import current_context, normalize_focus
+from roxabi_sense.report.dwell.tern_proofs import ProofIndex, current_context, project_timeline
 from roxabi_sense.report.dwell.tern_work import add_tern_work, summarize_tern_work
 from roxabi_sense.report.event_summary import redact_coarse
 from roxabi_sense.report.segments import FocusSegment, focus_segments
@@ -23,40 +23,45 @@ def observation(snapshot_id=1):
 
 def focus():
     return Event(2, ts(0), "focus", {"app": "so.stencil.tern", "title": "Tern",
+                 "_observed_at": ts(0),
                  "window_id": "window", "context": {"source": "tern", "ref": "context",
-                 "repo_ref": "repo", "cwd": "/projects/demo", "proof_ref": "proof"},
+                 "repo_ref": "repo", "cwd": "/projects/demo", "proof_ref": "proof",
+                 "agent_proof_ref": "proof"},
                  "agent": {"agent": "omp", "match": "tern_foreground"}})
 
 
 def test_proof_renewal_and_expiry_preserve_native_focus():
     snapshot = Event(1, ts(0), "tern_snapshot", {"run_ref": "run", "closed": []})
     horizon = datetime(2026, 1, 1, 0, 22, tzinfo=UTC)
-    normalized, cuts = normalize_focus([focus()], [snapshot], observation(), horizon)
-    assert cuts == {ts(20)}
+    projection = project_timeline([focus()], [snapshot], observation(), horizon,
+                                  history_ids={focus().id})
+    normalized = [record.history for record in projection.records if record.history is not None]
     assert normalized[1].payload["app"] == "so.stencil.tern"
     assert "context" not in normalized[1].payload and "agent" not in normalized[1].payload
-    segments = focus_segments(normalized, [], horizon=horizon)
+    segments = focus_segments(projection, [], horizon=horizon)
     assert segments[0].duration_s == 1200
     assert segments[0].context_ref == "context"
     assert segments[1].context_ref is None
     assert _key(normalized[0]) != _key(normalized[1])
+    index = ProofIndex([snapshot], observation())
     assert current_context(
-        focus(), snapshot, observation(), datetime(2026, 1, 1, 0, 20, 30, tzinfo=UTC)
+        focus(), index, datetime(2026, 1, 1, 0, 20, 30, tzinfo=UTC)
     ) == focus()
-    assert "context" not in current_context(focus(), snapshot, observation(), horizon).payload
+    assert "context" not in current_context(focus(), index, horizon).payload
 
 
 def test_closed_proof_wins_over_mismatched_meta():
     snapshot = Event(3, ts(10), "tern_snapshot", {"run_ref": "other", "closed": [
-        {"proof_ref": "proof", "confirmed_through": ts(5)}]})
-    normalized, cuts = normalize_focus([focus()], [snapshot], observation(),
-                                       datetime(2026, 1, 1, 0, 22, tzinfo=UTC))
-    assert cuts == {ts(5)}
-    assert normalized[1].ts == ts(5)
+        {"proof_ref": "proof", "started_at": ts(0), "confirmed_through": ts(5)}]})
+    projection = project_timeline([focus()], [snapshot], observation(),
+                                  datetime(2026, 1, 1, 0, 22, tzinfo=UTC),
+                                  history_ids={focus().id})
+    assert projection.records[1].at == datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
 
 
 def test_shared_work_views_union_and_unknown_attention():
-    pane = {"cwd": "/projects/demo", "omp_working": True, "work_proof_ref": "proof"}
+    pane = {"cwd": "/projects/demo", "pane_working": True, "omp_foreground": True,
+            "pane_work_proof_ref": "proof", "process_proof_ref": "proof"}
     snapshot = Event(1, ts(0), "tern_snapshot", {"run_ref": "run", "state": "observed",
                      "closed": [], "windows": [{"panes": [pane]}, {"panes": [pane]}]})
     result = add_tern_work(RepoAttribution([], [], None), [snapshot], observation(), [],
@@ -68,12 +73,29 @@ def test_shared_work_views_union_and_unknown_attention():
 
 def test_coarse_drops_private_refs():
     assert redact_coarse({"context_ref": "secret", "repo_ref": "secret", "marker": "secret",
-                          "window_key": "secret", "app": "Tern"}) == {"app": "Tern"}
+                          "window_key": "secret", "pane_work_proof_ref": "secret",
+                          "process_proof_ref": "secret", "agent_proof_ref": "secret",
+                          "app": "Tern"}) == {"app": "Tern"}
+
+
+def test_coarse_redacts_precise_observation_recursively_and_in_json():
+    private = "2026-01-01T00:00:00.123456Z"
+    coarse = redact_coarse({"_observed_at": private, "_native_observed_at": private,
+                            "app": "Tern", "nested": [
+        {"_observed_at": private, "_native_observed_at": private, "_published_at": private,
+         "_native_coverage_id": "private-id", "state": "observed"}
+    ]})
+    assert coarse == {"app": "Tern", "nested": [{"state": "observed"}]}
+    serialized = json.dumps(coarse)
+    assert all(key not in serialized for key in (
+        "_observed_at", "_native_observed_at", "_native_coverage_id", "_published_at",
+        private, "private-id",
+    ))
 
 
 def test_global_work_attention_is_unknown_without_native_coverage():
-    pane = {"pane_ref": "p", "pane_working": True, "omp_working": True,
-            "work_proof_ref": "proof"}
+    pane = {"pane_ref": "p", "pane_working": True, "omp_foreground": True,
+            "pane_work_proof_ref": "proof", "process_proof_ref": "proof"}
     snapshot = Event(1, ts(0), "tern_snapshot", {"run_ref": "run", "state": "observed",
                      "closed": [], "windows": [{"panes": [pane]}, {"panes": [pane]}]})
     result = summarize_tern_work([snapshot], observation(), [],

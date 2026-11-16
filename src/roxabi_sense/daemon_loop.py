@@ -31,14 +31,16 @@ _ATSPI_RESPAWN_MAX_S = 60.0
 
 
 def run_main_loop(**kwargs: Any) -> None:
+    collector = kwargs.pop("tern_collector", None)
     worker = None
     if kwargs["focus"] is not None:
         from roxabi_sense.collectors.tern.collector import TernCollector
         from roxabi_sense.collectors.tern.worker import TernWorker
 
-        worker = TernWorker(TernCollector())
+        worker = TernWorker(collector if collector is not None else TernCollector())
     try:
         if worker is not None:
+            worker.collector.start(kwargs["store"])
             worker.start()
         _run_main_loop(tern_worker=worker, **kwargs)
     finally:
