@@ -7,7 +7,9 @@ import time
 from collections.abc import Callable
 from typing import Any, Literal
 
+from roxabi_sense.collectors.focus.coverage import CoverageWriter
 from roxabi_sense.collectors.focus.probes.atspi import AtspiFocusProbe
+from roxabi_sense.collectors.focus.probes.cosmic import CosmicFocusProbe
 from roxabi_sense.collectors.focus.protocol import FocusProbe, FocusWindow, raw_dicts_to_windows
 from roxabi_sense.store import Store
 from roxabi_sense.util.agent_link import find_agent_link
@@ -54,6 +56,7 @@ class FocusCollector:
         self._last_focus_key: tuple[Any, ...] | None = None
         self.probe_count = 0
         self.last_probe_ms = 0
+        self._coverage = CoverageWriter()
 
     @property
     def backend_source(self) -> str:
@@ -143,7 +146,16 @@ class FocusCollector:
         store.set_meta("focus_probe_last_mode", mode)
         src = source if source is not None else self.backend_source
 
-        wrote = 0
+        initialized_wrote = self._coverage.initialize(store)
+        if isinstance(self._focus_probe, CosmicFocusProbe) and src == "cosmic":
+            coverage_wrote, changed = self._coverage.update(store, self._focus_probe, windows)
+            if changed:
+                self._last_focus_key = None
+        else:
+            coverage_wrote = self._coverage.legacy(store, src, windows)
+            if coverage_wrote:
+                self._last_focus_key = None
+        wrote = coverage_wrote + initialized_wrote
         if mode in {"full", "desktop"}:
             # ADR-004: probes soft-fail as [] — never emit empty inventory (false
             # meeting clear). Hangup still clears via non-empty desktop without Meet.
@@ -163,10 +175,14 @@ class FocusCollector:
     def _maybe_write_focus(
         self, store: Store, windows: list[FocusWindow], *, source: str
     ) -> int:
-        active = next((w for w in windows if w.active), None)
-        if active is None:
+        active_windows = [w for w in windows if w.active]
+        if len(active_windows) != 1:
+            self._last_focus_key = None
             return 0
-        focus_key = (active.app, active.title, active.pid, _agent_key(active.agent))
+        active = active_windows[0]
+        focus_key = (
+            active.app, active.title, active.pid, active.window_id, _agent_key(active.agent)
+        )
         if focus_key == self._last_focus_key:
             return 0
         self._last_focus_key = focus_key
@@ -175,6 +191,8 @@ class FocusCollector:
             "title": active.title,
             "source": source,
         }
+        if active.window_id:
+            body["window_id"] = active.window_id
         if active.pid is not None:
             body["pid"] = active.pid
         if active.title_raw and active.title_raw != active.title:
@@ -212,6 +230,7 @@ class FocusCollector:
                     pid=w.pid,
                     title_raw=raw if raw != title else None,
                     agent=agent,
+                    window_id=w.window_id,
                 )
             )
         return out
@@ -241,8 +260,9 @@ def _desktop_payload(windows: list[FocusWindow], *, source: str) -> dict[str, An
         "source": source,
         "inventory": inv,
     }
-    active = next((w for w in windows if w.active), None)
-    if active is not None:
+    active_windows = [w for w in windows if w.active]
+    if len(active_windows) == 1:
+        active = active_windows[0]
         focus: dict[str, Any] = {"app": active.app, "title": active.title}
         if active.pid is not None:
             focus["pid"] = active.pid

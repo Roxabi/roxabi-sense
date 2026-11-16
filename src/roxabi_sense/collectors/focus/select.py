@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 
 from roxabi_sense.collectors.focus.probes.atspi import AtspiFocusProbe
+from roxabi_sense.collectors.focus.probes.cosmic import CosmicFocusProbe
 from roxabi_sense.collectors.focus.probes.kde import KdeFocusProbe
 from roxabi_sense.collectors.focus.probes.noop import NoopFocusProbe
 from roxabi_sense.collectors.focus.probes.wlr import WlrFocusProbe
@@ -19,17 +20,19 @@ def candidate_sources(session: SessionInfo) -> list[FocusSource]:
     """Deterministic backend order for env (always ends with noop)."""
     if session.session_type == "x11":
         return ["x11", "atspi", "noop"]
+    if session.desktop_family == "gnome":
+        return ["atspi", "x11", "noop"]
     if session.desktop_family == "wlroots":
         return ["wlr", "atspi", "x11", "noop"]
     if session.desktop_family == "kde":
-        # AT-SPI often works on Plasma; kde stub is alternative until D-Bus ships
         return ["atspi", "kde", "x11", "noop"]
-    # gnome / cosmic / unknown wayland
-    return ["atspi", "x11", "noop"]
+    return ["cosmic", "atspi", "x11", "noop"]
 
 
 def build_probe(source: FocusSource, *, env: Mapping[str, str] | None = None) -> FocusProbe:
     env_map = dict(env) if env is not None else None
+    if source == "cosmic":
+        return CosmicFocusProbe(env=env_map)
     if source == "atspi":
         return AtspiFocusProbe()
     if source == "x11":

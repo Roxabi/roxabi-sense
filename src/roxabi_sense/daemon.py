@@ -8,6 +8,7 @@ from typing import Any
 
 from roxabi_sense.atspi import FocusAtspiAgent
 from roxabi_sense.collectors.focus import FocusCollector
+from roxabi_sense.collectors.focus.ownership import acquire_focus_owner, release_focus_owner
 from roxabi_sense.collectors.focus.runtime import FocusRuntime
 from roxabi_sense.collectors.idle_watch import IdleWatch
 from roxabi_sense.config import SenseConfig
@@ -29,6 +30,10 @@ from roxabi_sense.store import Store
 
 def run_daemon(cfg: SenseConfig) -> int:
     store = Store(cfg.db_path)
+    focus_owner = acquire_focus_owner(cfg.db_path) if cfg.focus else None
+    if cfg.focus and focus_owner is None:
+        store.close()
+        raise RuntimeError("focus collector already owned by another process")
     focus: FocusCollector | None = FocusCollector() if cfg.focus else None
     focus_rt: FocusRuntime | None = FocusRuntime(focus) if focus is not None else None
     stop = False
@@ -153,6 +158,7 @@ def run_daemon(cfg: SenseConfig) -> int:
             agent.stop()
         if idle_watch is not None:
             idle_watch.stop()
+        release_focus_owner(focus_owner)
         store.close()
         print("sense daemon: stopped", flush=True)
     return 0
@@ -160,9 +166,14 @@ def run_daemon(cfg: SenseConfig) -> int:
 
 def collect_once(cfg: SenseConfig) -> int:
     store = Store(cfg.db_path)
-    collectors = build_collectors(cfg)
+    focus_owner = acquire_focus_owner(cfg.db_path) if cfg.focus else None
     try:
-        if cfg.focus:
+        if cfg.focus and focus_owner is None:
+            use_logind = cfg.idle and cfg.idle_backend in {"logind", "auto"}
+            collectors = build_poll_collectors(cfg, logind_idle=use_logind)
+        else:
+            collectors = build_collectors(cfg)
+        if cfg.focus and focus_owner is not None:
             from roxabi_sense.collectors.focus import FocusCollector
             from roxabi_sense.collectors.focus.runtime import FocusRuntime
 
@@ -178,6 +189,7 @@ def collect_once(cfg: SenseConfig) -> int:
             store.set_meta("idle_watch", "n/a")
         return n
     finally:
+        release_focus_owner(focus_owner)
         store.close()
 
 

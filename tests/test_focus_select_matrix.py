@@ -16,7 +16,7 @@ from roxabi_sense.collectors.focus.session import SessionInfo, detect_session
             {"XDG_SESSION_TYPE": "wayland", "XDG_CURRENT_DESKTOP": "COSMIC"},
             "wayland",
             "cosmic",
-            ["atspi", "x11", "noop"],
+            ["cosmic", "atspi", "x11", "noop"],
         ),
         (
             {"XDG_SESSION_TYPE": "wayland", "XDG_CURRENT_DESKTOP": "GNOME"},
@@ -60,7 +60,7 @@ from roxabi_sense.collectors.focus.session import SessionInfo, detect_session
             {},
             "unknown",
             "unknown",
-            ["atspi", "x11", "noop"],
+            ["cosmic", "atspi", "x11", "noop"],
         ),
     ],
 )

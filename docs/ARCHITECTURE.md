@@ -134,7 +134,13 @@ stay on the workstation. Local stdio MCP remains for offline / workstation agent
 
 1. **Agent sessions** — grok/claude on-disk registries (read-only). Merge live Herdr `agent list` for OMP cwd/status/`session_id` (id = path stem of `agent_session.value`). Do not parse OMP jsonl. Highest ROI.  
 2. **Idle** — Wayland `ext-idle-notify` (primary on Cosmic); logind secondary; see ADR-002.  
-3. **Focus** — `FocusProbe` protocol under `collectors/focus/` (AT-SPI agent, x11 xprop, noop; wlr/kde P1). Selection from session env; daemon demotes when AT-SPI dies.  
+3. **Focus** — `FocusProbe` protocol under `collectors/focus/`. On COSMIC or
+   an unidentified Wayland desktop, the read-only COSMIC toplevel observer is
+   selected by advertised capability before AT-SPI and other fallbacks.
+   Window identity includes the connection epoch and native identifier.
+   `focus_coverage` events mark observed/unknown transitions; source-health
+   observations live in metadata. Reports clip focus to observed coverage and
+   its last confirmed health observation, retaining older unverified history.
 4. **Process presence** — `pgrep`-class checks for configured app names.  
 5. **Mux** — `tmux_snapshot` (tmux panes) **and** `herdr_snapshot` (live Herdr/OMP agents: pane_id, cwd, agent, status, focused, session_id, `title` = agent session title with spinner/π chrome stripped — never raw terminal titles, dropped by coarse redaction; plus `focused` = server-focused pane `{pane_id, cwd}` incl. plain shells; keyframe every 300 s). Ghostty→Herdr→OMP is the live stack; tmux+grok still works. Report layer (`report/dwell/repos.py`): **focus per repo** = terminal focus × Herdr focused pane (Ghostty titles go stale across multi-client views; bare `comm` never attributes); **agent time per repo and per session** = wall time with a pane `working`, split by whether it was in your focus; snapshots trusted ≤ 900 s (suspend / daemon down).
 

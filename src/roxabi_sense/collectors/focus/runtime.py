@@ -56,11 +56,8 @@ class FocusRuntime:
         for src in self.preferred:
             p = self._probes[src]
             if src == "atspi":
-                # Try start path: select atspi optimistically if first preferred
-                if src == self.preferred[0]:
-                    chosen = p
-                    break
-                if p.probe():
+                # Only a primary AT-SPI agent is supervised from startup.
+                if src == self.preferred[0] or p.probe():
                     chosen = p
                     break
                 continue
@@ -76,9 +73,12 @@ class FocusRuntime:
         if ap is not None:
             ap.mark_healthy(healthy)
         if healthy:
-            if self.preferred and self.preferred[0] == "atspi":
-                if self.active.source != "atspi":
-                    self._activate(store, self._probes["atspi"], reason="recover")
+            if (
+                "atspi" in self.preferred
+                and self.active.source in self.preferred
+                and self.preferred.index("atspi") < self.preferred.index(self.active.source)
+            ):
+                self._activate(store, self._probes["atspi"], reason="recover")
             return
         # unhealthy
         if self.active.source == "atspi":

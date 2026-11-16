@@ -15,7 +15,7 @@ def test_detect_cosmic_wayland() -> None:
     )
     assert info.session_type == "wayland"
     assert info.desktop_family == "cosmic"
-    assert candidate_sources(info) == ["atspi", "x11", "noop"]
+    assert candidate_sources(info) == ["cosmic", "atspi", "x11", "noop"]
 
 
 def test_detect_pure_x11() -> None:
@@ -44,7 +44,7 @@ def test_detect_gnome_and_unknown() -> None:
     assert candidate_sources(gnome) == ["atspi", "x11", "noop"]
     unk = detect_session({})
     assert unk.session_type == "unknown"
-    assert candidate_sources(unk) == ["atspi", "x11", "noop"]
+    assert candidate_sources(unk) == ["cosmic", "atspi", "x11", "noop"]
 
 
 def test_select_first_ok_factory() -> None:

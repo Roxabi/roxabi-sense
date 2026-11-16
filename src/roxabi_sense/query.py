@@ -20,6 +20,7 @@ from roxabi_sense.report.care import compile_care_brief
 from roxabi_sense.report.event_summary import cap_json_bytes
 from roxabi_sense.report.event_summary import redact_coarse as _redact_obj
 from roxabi_sense.report.presence import presence_from_store
+from roxabi_sense.report.status import current_focus
 from roxabi_sense.store import DEFAULT_DAY_LIMIT, Store, clamp_event_limit
 
 DetailLevel = Literal["coarse", "full"]
@@ -74,7 +75,7 @@ class SenseQuery:
         )
         focus = None
         sessions: list[dict[str, Any]] = []
-        focus_ev = snap.latest_by_kind.get("focus")
+        focus_ev, quality = current_focus(snap)
         if focus_ev is not None:
             focus = {
                 "ts": focus_ev.ts,
@@ -116,6 +117,7 @@ class SenseQuery:
             "machine": snap.machine,
             "db_exists": snap.db_exists,
             "focus": focus,
+            "focus_quality": quality,
             "agent_sessions": sessions,
             "annotations": {"meeting": meeting},
         }

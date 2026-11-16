@@ -57,6 +57,7 @@ def run_main_loop(
     now0 = time.monotonic()
     next_poll = now0 + cfg.poll_seconds
     next_desktop = now0 + cfg.focus_backup_seconds if events_enabled else float("inf")
+    next_native = now0 + 1.0
 
     boot_cols = list(poll_collectors)
     if focus is not None:
@@ -76,6 +77,8 @@ def run_main_loop(
     while not stop_flag():
         now = time.monotonic()
         deadlines = [next_poll]
+        if focus_rt is not None and focus_rt.active.source == "cosmic":
+            deadlines.append(next_native)
         if events_enabled and focus is not None:
             deadlines.append(next_desktop)
         if idle_respawn_at > 0:
@@ -100,7 +103,7 @@ def run_main_loop(
                         atspi_backoff = _ATSPI_RESPAWN_BASE_S
                 handle_atspi_msg(
                     msg,
-                    focus=focus,
+                    focus=focus if focus_rt is None or focus_rt.active.source == "atspi" else None,
                     store=store,
                     on_activity=_on_activity,
                     trace=trace,
@@ -198,9 +201,20 @@ def run_main_loop(
             else:
                 events_enabled, focus_on_poll = sync_focus_mode(agent)
 
+        if (
+            focus is not None
+            and focus_rt is not None
+            and focus_rt.active.source == "cosmic"
+            and now >= next_native
+        ):
+            tick_all([focus], store)
+            next_native = now + 1.0
+
         if now >= next_poll:
             cols = list(poll_collectors)
-            if focus is not None and focus_on_poll:
+            if focus is not None and focus_on_poll and (
+                focus_rt is None or focus_rt.active.source != "cosmic"
+            ):
                 cols.append(focus)
             wrote = tick_all(cols, store)
             store.set_meta("last_tick", _utc_stamp())

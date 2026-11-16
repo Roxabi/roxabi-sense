@@ -8,26 +8,9 @@ from typing import Any
 from roxabi_sense.report.away import IDLE_GAP_S
 from roxabi_sense.util.time import parse_ts
 
-_STRETCH_MAX_AGE_S = 120.0
 _RECENT_AWAY_S = 15 * 60.0
 
 
-def _current_stretch(
-    attn: list[Any], *, now: datetime, presence_state: str
-) -> dict[str, Any] | None:
-    if presence_state != "active" or not attn:
-        return None
-    last = max(attn, key=lambda s: str(getattr(s, "end", "") or ""))
-    try:
-        age = (now - parse_ts(str(last.end))).total_seconds()
-    except (TypeError, ValueError):
-        return None
-    if age > _STRETCH_MAX_AGE_S:
-        return None
-    return {
-        "app": getattr(last, "app", "?"),
-        "minutes": round(float(getattr(last, "duration_s", 0.0) or 0.0) / 60.0, 2),
-    }
 
 
 def _last_away(

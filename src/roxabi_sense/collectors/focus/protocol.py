@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
-FocusSource = Literal["atspi", "x11", "wlr", "kde", "noop"]
+FocusSource = Literal["atspi", "cosmic", "x11", "wlr", "kde", "noop"]
 
-FOCUS_SOURCES: frozenset[str] = frozenset({"atspi", "x11", "wlr", "kde", "noop"})
+FOCUS_SOURCES: frozenset[str] = frozenset(
+    {"atspi", "cosmic", "x11", "wlr", "kde", "noop"}
+)
 
 
 @dataclass
@@ -19,6 +21,7 @@ class FocusWindow:
     pid: int | None = None
     title_raw: str | None = None
     agent: dict[str, Any] | None = None
+    window_id: str | None = None
 
 
 @runtime_checkable
@@ -58,6 +61,7 @@ def raw_dicts_to_windows(rows: list[dict[str, Any]]) -> list[FocusWindow]:
                 active=bool(item.get("active")),
                 role=str(item.get("role") or ""),
                 pid=pid,
+                window_id=str(item["window_id"]) if item.get("window_id") else None,
             )
         )
     return out

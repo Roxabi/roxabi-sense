@@ -53,3 +53,26 @@ def test_fake_probe_writes_source(tmp_path: Path, monkeypatch) -> None:
     assert ev.payload["source"] == "x11"
     assert ev.payload["app"] == "kitty"
     store.close()
+
+
+def test_ambiguous_active_windows_are_not_promoted(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.resolve_app_name", lambda app, pid: app
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.find_agent_link", lambda *a, **k: None
+    )
+    monkeypatch.setattr("roxabi_sense.collectors.focus.collector.children_map", lambda: {})
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.list_mux_agent_panes", lambda: []
+    )
+    collector = FocusCollector(sessions_loader=lambda: [])
+    windows = [
+        FocusWindow(app="one", title="first", active=True),
+        FocusWindow(app="two", title="second", active=True),
+    ]
+    with Store(tmp_path / "s.db") as store:
+        collector.apply(store, windows, mode="full")
+        assert store.last_by_kind("focus") is None
+        snapshot = store.last_by_kind("desktop_snapshot")
+        assert snapshot is not None and "focus" not in snapshot.payload

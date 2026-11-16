@@ -156,7 +156,7 @@ def walk(focus_only: bool, with_focused: bool = False) -> list:
                             "pid": pid,
                         }
                     )
-                    return windows
+                    continue
                 if focus_only and with_focused:
                     if not active:
                         continue
@@ -212,20 +212,8 @@ def window_from_src(src: dict) -> dict | None:
 
 
 def emit_focus_win(win: dict, reason: str) -> None:
-    """Emit focus fact from event source (no ACTIVE walk / first-wins)."""
-    global _last_probe_ms
-    _last_probe_ms = time.monotonic() * 1000.0
-    emit(
-        {
-            "type": "probe_result",
-            "mode": "focus",
-            "reason": reason,
-            "windows": [win],
-            "ms": 0,
-            "source": "atspi",
-            "focus_via": "event_source",
-        }
-    )
+    """Recheck the complete desktop before promoting any event source."""
+    do_probe("focus", reason)
 
 
 def do_probe(mode: str, reason: str) -> None:
@@ -393,6 +381,8 @@ def on_event(event) -> None:
         return
     reason = event_reason(event)
     src = describe_src(event)
+    if reason == "name" and not src.get("frame_states", src.get("states", {})).get("active"):
+        return
     win = window_from_src(src)
     if win is None:
         return
