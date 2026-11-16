@@ -127,12 +127,16 @@ change Tern settings. A disabled plugin or a competing earlier title formatter
 can prevent attribution; Sense does not change their order or enable plugins.
 
 The plugin prefixes a short random marker to the window title and refreshes a
-private, short-lived registration under `$XDG_RUNTIME_DIR`. Sense matches it
-only against an unambiguous native window and exact Tern client incarnation;
-missing, expired or conflicting evidence leaves Tern context unknown. Both
-Sense and Tern must address the same daemon endpoint. It reads metadata, not
-terminal contents or conversation files. Restarting or reloading generates new
-markers; expired registrations cannot be renewed.
+private, short-lived registration under `$XDG_RUNTIME_DIR`. Sense discovers
+client routes from live registrations or client inventory, then reads actual
+window and pane metadata through explicit routes, including the empty
+first-window key when applicable. No particular window must stay open.
+The marker must match an unambiguous native window and exact Tern client
+incarnation; missing, expired or conflicting evidence leaves Tern context
+unknown without removing native app focus. Pane work can still be observed
+without a marker. Both Sense and Tern must address the same daemon endpoint.
+It reads metadata, not terminal contents or conversation files. Restarting or
+reloading generates new markers; expired registrations cannot be renewed.
 
 To smoke-check the owned copy without contacting the running daemon, use an
 isolated configuration and a nonexistent daemon socket:

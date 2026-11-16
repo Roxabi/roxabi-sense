@@ -111,13 +111,13 @@ def test_source_failure_closes_proofs_without_raising(tmp_path, monkeypatch):
     clock = [100.0]
     monkeypatch.setattr(observation, "_clock", lambda: clock[0])
     collector = TernCollector()
-    monkeypatch.setattr(collector, "_collect", lambda: [window()])
+    monkeypatch.setattr(collector, "_collect", lambda _cancel: [window()])
     with Store(tmp_path / "db") as store:
         assert collector.tick(store) == 1
         before = observation_meta(store)
         clock[0] += 1
 
-        def fail():
+        def fail(_cancel):
             raise TernUnavailable("source failed")
 
         monkeypatch.setattr(collector, "_collect", fail)

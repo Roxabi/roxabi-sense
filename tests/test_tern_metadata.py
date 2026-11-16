@@ -80,3 +80,25 @@ def test_shared_underlying_pane_is_stable_across_window_clients():
     second["panes"][0]["identity"]["hops"] = [{"host": "other"}]
     assert get(first)["pane_ref"] != get(second)["pane_ref"]
     assert get(first)["session_context_ref"] != get(second)["session_context_ref"]
+
+
+def test_idle_shared_pane_has_identical_work_despite_selected_process_proof():
+    selected = fixture()
+    selected["panes"][0]["working"] = False
+    background = deepcopy(selected)
+    background["clients"][0].update(window="other", conn=3, since=4)
+    background["sessions"][0]["tabs"][0]["blocks"][0]["focused"] = False
+
+    def process(_key, pane):
+        return {"pane": pane, "foreground": {"name": "omp"}}
+
+    selected_pane_view = parse_window(
+        selected, clients(selected)[0], "endpoint", process
+    )["panes"][0]
+    background_pane_view = parse_window(
+        background, clients(background)[0], "endpoint", process
+    )["panes"][0]
+    assert selected_pane_view["omp_foreground"] is True
+    assert background_pane_view["omp_foreground"] is None
+    assert selected_pane_view["omp_working"] is False
+    assert background_pane_view["omp_working"] is False

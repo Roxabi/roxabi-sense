@@ -29,7 +29,7 @@ _APP_ALIASES: dict[str, str] = {
 }
 # Multi-window single process: window pid does not identify a surface.
 _SHARED_PID_APPS: frozenset[str] = frozenset({"ghostty", "unnamed"})
-_TERMINAL_APPS: frozenset[str] = frozenset({"ghostty", "unnamed"})
+_TERMINAL_APPS: frozenset[str] = frozenset({"ghostty", "unnamed", "so.stencil.tern"})
 
 
 @dataclass(frozen=True)

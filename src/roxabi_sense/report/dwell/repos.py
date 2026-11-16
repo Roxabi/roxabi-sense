@@ -105,6 +105,12 @@ def attribute_repos(
     spans = _spans([prior, *snaps] if prior is not None else snaps, window_start, horizon)
     attn, linked = _attention(spans, segments)
     focus: dict[str, float] = defaultdict(float, linked)
+    tern_focus: dict[str, tuple[str, float]] = {}
+    for seg in segments:
+        if (seg.app == "so.stencil.tern" and seg.context_ref and seg.repo_ref
+                and seg.cwd and seg.agent_match != "comm" and seg.duration_s > _EPS_S):
+            label, seconds = tern_focus.get(seg.repo_ref, (repo_label(seg.cwd), 0.0))
+            tern_focus[seg.repo_ref] = (label, seconds + seg.duration_s)
     working: dict[str, float] = defaultdict(float)
     focused_on: dict[str, float] = defaultdict(float)
     session_work: dict[tuple[str, str], float] = defaultdict(float)
@@ -146,7 +152,7 @@ def attribute_repos(
         for repo, secs in ranked_repos
     ]
     return RepoAttribution(
-        focus=_ranked(focus),
+        focus=sorted([*_ranked(focus), *tern_focus.values()], key=lambda kv: (-kv[1], kv[0])),
         agents=agents,
         focused_repo_now=live.focused_repo if live is not None else None,
     )
@@ -227,12 +233,7 @@ def _attention(
     for seg, (lo, hi), cov in zip(terminal, bounds, covered, strict=True):
         _credit_link(linked, seg, (hi - lo).total_seconds() - cov)
     for seg in segments:
-        if seg.app == "so.stencil.tern":
-            # Only the native-window joined, proof-clipped context may credit Tern.
-            # Herdr's focused pane is a different source and cannot identify it.
-            if seg.context_ref and seg.repo_ref:
-                _credit_link(linked, seg, seg.duration_s)
-        elif not is_terminal_app(seg.app):
+        if seg.app != "so.stencil.tern" and not is_terminal_app(seg.app):
             _credit_link(linked, seg, seg.duration_s)
     return per_span, linked
 

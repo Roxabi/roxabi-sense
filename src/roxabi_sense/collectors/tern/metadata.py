@@ -91,7 +91,7 @@ def observation_shape(data: dict[str, Any]) -> str:
 
 def parse_window(
     data: dict[str, Any], route: dict[str, Any], endpoint: str,
-    process: Callable[[str, int], dict[str, Any]],
+    process: Callable[[str, int], dict[str, Any]], *, include_pane_id: bool = False,
 ) -> dict[str, Any]:
     """Project panes without retaining terminal titles, command lines or PIDs."""
     key = route["window_key"]
@@ -132,8 +132,11 @@ def parse_window(
         panes.append({"pane_ref": pane_ref, "host_ref": host_ref, "cwd": cwd,
                       "repo_ref": repo_ref, "session_context_ref": session_ref,
                       "pane_working": working, "omp_foreground": foreground,
-                      "omp_working": working if foreground is True else None,
-                      "selected": pane == selected})
+                      "omp_working": False if working is False else (
+                          working if foreground is True else None
+                      ),
+                      "selected": pane == selected,
+                      **({"_pane_id": pane} if include_pane_id else {})})
     panes.sort(key=lambda pane: pane["pane_ref"])
     if selected is not None and sum(p["selected"] for p in panes) != 1:
         selected = None

@@ -195,12 +195,13 @@ def compile_day_recap(
         "tern_snapshot", to_z(max(horizon, datetime.now(UTC)) + timedelta(seconds=1))
     ))
     tern_meta = store.get_meta("tern_observation")
-    focus_ev, proof_cuts = normalize_focus(focus_ev, snapshots, tern_meta, horizon)
-    raw_focus, _ = normalize_focus(raw_focus, snapshots, tern_meta, horizon)
+    context_cuts: set[str] = set()
+    focus_ev, proof_cuts = normalize_focus(
+        focus_ev, snapshots, tern_meta, horizon, context_cuts=context_cuts)
+    raw_focus, raw_proof_cuts = normalize_focus(raw_focus, snapshots, tern_meta, horizon)
     segments = focus_segments(focus_ev, away, horizon=horizon, coverage_events=coverage)
     attn = attention_segments(segments)
     stays = terminal_stay_stats(attn)
-
     apps = top_apps(segments, limit=20)
     time_by_app = [(a.app, a.seconds) for a in apps]
     repos = attribute_repos(
@@ -210,7 +211,8 @@ def compile_day_recap(
         horizon=horizon,
         prior=store.last_by_kind_before(HERDR_KIND, start),
     )
-    repos = add_tern_work(repos, snapshots, tern_meta, segments, parse_ts(start), horizon)
+    repos = add_tern_work(repos, snapshots, tern_meta, segments, parse_ts(start), horizon,
+                          coverage=raw_coverage)
     modes = {a.mode for a in away}
     idle_mode = _idle_mode(modes, bool(away))
     pure_away = [a for a in away if a.presence != "meeting"]
@@ -224,7 +226,7 @@ def compile_day_recap(
     )
     title_sw = sum(a.end == b.start and b.start not in proof_cuts for a, b in pairwise(segments))
     app_sw = switch_count(segments, key=lambda s: s.app)
-    ctx_sw = sum(a.end == b.start and b.start not in proof_cuts
+    ctx_sw = sum(a.end == b.start and b.start not in context_cuts
                  and attention_key(a) != attention_key(b) for a, b in pairwise(attn))
     active_focus, active_quality = current_focus(status_snapshot(store), now=horizon)
     if active_focus is not None:
@@ -239,9 +241,8 @@ def compile_day_recap(
     current_attention = resolve_current_attention(
         current=active_focus, quality=active_quality, focus=raw_focus, coverage=raw_coverage,
         attention=attn, away=away, day_start=parse_ts(start), now=horizon,
-        raw_observation=raw_observation,
+        raw_observation=raw_observation, proof_cuts=raw_proof_cuts,
     )
-
     return DayRecap(
         day=day_label,
         start=start,
@@ -284,7 +285,8 @@ def compile_day_recap(
             else "legacy_unverified"
         ),
         current_attention=current_attention,
-        tern_work=summarize_tern_work(snapshots, tern_meta, segments, parse_ts(start), horizon),
+        tern_work=summarize_tern_work(snapshots, tern_meta, segments, parse_ts(start), horizon,
+                                      coverage=raw_coverage),
     )
 
 

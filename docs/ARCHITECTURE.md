@@ -151,8 +151,13 @@ stay on the workstation. Local stdio MCP remains for offline / workstation agent
    complete native inventory and matching endpoint/client incarnation can
    attach Tern context to focus; failures leave native focus intact and context
    unknown. The collector does not read terminal buffers or conversation files.
-   Semantic transitions are events; unchanged source-health observations are
-   metadata, and reports clip context to confirmed proof intervals.
+   Acquisition runs in one bounded, cancellable worker, independently of native
+   polling; only the owning daemon thread publishes to the store. Discovery may
+   use the combined unscoped CLI response for its client inventory alone; all
+   pane and process facts use explicit routes. Semantic transitions are events;
+   unchanged source-health observations are metadata. Proof freshness is
+   anchored to each scope's request, and historical credit to confirmed sample
+   bounds, never to worker completion or publication time.
 
 Focus failure must not block agent-session collection.
 

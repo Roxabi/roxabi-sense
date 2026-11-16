@@ -45,7 +45,7 @@ def _key(event: Event) -> tuple[str, ...]:
 def resolve_current_attention(
     *, current: Event | None, quality: str, focus: list[Event], coverage: list[Event],
     attention: list[FocusSegment], away: list[AwaySegment], day_start: datetime,
-    now: datetime, raw_observation: str | None,
+    now: datetime, raw_observation: str | None, proof_cuts: set[str] | None = None,
 ) -> CurrentAttention:
     """Resolve one run; coverage freshness validates now, never extends dwell."""
     if current is None or quality == "unknown" or parse_ts(current.ts) > now:
@@ -53,6 +53,22 @@ def resolve_current_attention(
     fields = project_focus(current)
     key = _key(current)
     focus = sorted((e for e in focus if parse_ts(e.ts) <= now), key=lambda e: (e.ts, e.id))
+    # A right-censor for an open, live proof caps historical dwell but is not
+    # an occurrence transition. The current event has already passed source
+    # validation; only its own synthetic clone may be omitted here.
+    live_cap: datetime | None = None
+    if len(focus) >= 2 and current is not None:
+        last, preceding = focus[-1], focus[-2]
+        current_context = current.payload.get("context")
+        preceding_context = preceding.payload.get("context")
+        if (proof_cuts and last.ts in proof_cuts and last.id == preceding.id
+                and isinstance(current_context, dict)
+                and current_context.get("source") == "tern"
+                and isinstance(preceding_context, dict)
+                and current_context.get("proof_ref") == preceding_context.get("proof_ref")
+                and _key(preceding) == key):
+            live_cap = parse_ts(last.ts)
+            focus = focus[:-1]
     coverage = sorted((e for e in coverage if parse_ts(e.ts) <= now), key=lambda e: (e.ts, e.id))
     context_floor = day_start
     previous_key: tuple[str, ...] | None = None
@@ -72,6 +88,8 @@ def resolve_current_attention(
             confirmed = min(now, parse_ts(observation["last_observed_at"]))
         except (KeyError, TypeError, ValueError):
             return CurrentAttention(quality="unknown")
+    if live_cap is not None and confirmed is not None:
+        confirmed = min(confirmed, live_cap)
     end = confirmed if confirmed is not None else now
     floor = max(day_start, parse_ts(coverage[0].ts)) if coverage else day_start
     for index, event in enumerate(coverage):

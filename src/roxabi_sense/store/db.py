@@ -52,6 +52,7 @@ TIMELINE_KINDS: tuple[str, ...] = (
     "media",
     "media_snapshot",
     "tmux_snapshot",
+    "tern_snapshot",
     "focus",
     "focus_coverage",
     "focus_legacy",

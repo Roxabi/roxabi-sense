@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
@@ -9,7 +10,7 @@ from typing import Any
 
 from roxabi_sense.collectors.tern.metadata import opaque, selected_semantic, work_semantic
 from roxabi_sense.store import Store
-from roxabi_sense.util.time import to_z
+from roxabi_sense.util.time import parse_ts, to_z
 
 
 def _clock() -> float:
@@ -18,6 +19,41 @@ def _clock() -> float:
 
 def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _sample_stamp(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _public(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _public(item) for key, item in value.items()
+                if not isinstance(key, str) or not key.startswith("_")}
+    if isinstance(value, list):
+        return [_public(item) for item in value]
+    return value
+
+_MISSING = object()
+
+
+def _sample(
+    value: Any, now: datetime, clock: float,
+) -> tuple[datetime, float, datetime, float] | None:
+    if value is _MISSING:
+        return now, clock, now, clock
+    try:
+        start = parse_ts(value["start_wall"])
+        end = parse_ts(value["end_wall"])
+        start_boot = float(value["start_boot"])
+        end_boot = float(value["end_boot"])
+        if (start.tzinfo is None or end.tzinfo is None
+                or not math.isfinite(start_boot) or not math.isfinite(end_boot)
+                or start_boot < 0 or start_boot > end_boot or end_boot > clock
+                or start > end or end > now):
+            return None
+        return start, start_boot, end, end_boot
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+        return None
 
 
 class ObservationWriter:
@@ -30,10 +66,12 @@ class ObservationWriter:
     def __init__(self, *, freshness_s: int = 10) -> None:
         self.run_ref = secrets.token_urlsafe(18)
         self.freshness_s = freshness_s
-        self.last_clock: float | None = None
         self.snapshot_id: int | None = None
         self.fingerprint: str | None = None
         self.scopes: dict[str, dict[str, Any]] = {}
+        self.watermarks: dict[str, float] = {}
+        self.public_windows: list[dict[str, Any]] = []
+        self.healthy = False
         self.initialized = False
 
     def _initialize(self, store: Store) -> list[dict[str, str]]:
@@ -63,53 +101,89 @@ class ObservationWriter:
         stamp = to_z(now)
         clock = _clock()
         closed = self._initialize(store)
-        gap = self.last_clock is not None and clock - self.last_clock > self.freshness_s
         healthy = windows is not None
-        semantics: dict[str, str] = {}
-        freshness: dict[str, float] = {}
+        candidates: dict[str, tuple[str, Any, float | None]] = {}
         if windows is not None:
             for window in windows:
                 route = [window.get("endpoint_ref"), window["window_key"],
                          window["conn"], window["since"]]
                 for pane in window["panes"]:
+                    work_scope = opaque("work-scope", pane["pane_ref"])
+                    candidates[work_scope] = (
+                        opaque("work", work_semantic(pane)),
+                        pane.get("_work_sample", _MISSING), None,
+                    )
                     if pane.get("selected") and window.get("registered") is True:
                         scope = opaque("selected-scope", route)
-                        semantics[scope] = opaque("selected", selected_semantic(pane))
-                        freshness[scope] = max(0.0, min(
-                            self.freshness_s,
-                            float(window.get("_lease_seconds", self.freshness_s)) - 1,
-                        ))
-                    semantics[opaque("work-scope", pane["pane_ref"])] = opaque(
-                        "work", work_semantic(pane)
-                    )
+                        expiry = window.get("_registration_expires_boot")
+                        if expiry is None and "_lease_seconds" in window:
+                            expiry = clock + max(0.0, float(window["_lease_seconds"]) - 1)
+                        candidates[scope] = (
+                            opaque("selected", selected_semantic(pane)),
+                            pane.get("_selected_sample", _MISSING), expiry,
+                        )
+
+        # Expiry fences the in-flight acquisition at the time it is detected.
         for scope, proof in self.scopes.items():
-            if (gap or not healthy or semantics.get(scope) != proof["semantic_ref"]
-                    or clock >= proof.get("expires_boottime", 0)):
+            if clock >= proof["expires_boottime"]:
+                self.watermarks[scope] = max(clock, self.watermarks.get(scope, 0.0))
+
+        accepted: dict[str, tuple[str, datetime, float, float, datetime]] = {}
+        for scope, (semantic, raw_sample, registration_expiry) in candidates.items():
+            sample = _sample(raw_sample, now, clock)
+            if sample is None:
+                continue
+            start, start_boot, end, _ = sample
+            expiry = start_boot + self.freshness_s
+            if registration_expiry is not None:
+                try:
+                    registration_expiry = float(registration_expiry)
+                    if not math.isfinite(registration_expiry):
+                        continue
+                    expiry = min(expiry, registration_expiry)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+            if start_boot < self.watermarks.get(scope, 0.0) or expiry <= clock:
+                continue
+            accepted[scope] = (semantic, start, start_boot, expiry, end)
+
+        next_scopes: dict[str, dict[str, Any]] = {}
+        for scope, proof in self.scopes.items():
+            candidate = accepted.get(scope)
+            if (not healthy or candidate is None
+                    or candidate[0] != proof["semantic_ref"]
+                    or clock >= proof["expires_boottime"]):
+                if not healthy or candidate is None:
+                    self.watermarks[scope] = max(clock, self.watermarks.get(scope, 0.0))
                 closed.append({"proof_ref": proof["proof_ref"],
                                "confirmed_through": proof["last_observed_at"]})
-        next_scopes: dict[str, dict[str, Any]] = {}
-        for scope, semantic in semantics.items():
-            prior = self.scopes.get(scope)
-            if (gap or prior is None or prior["semantic_ref"] != semantic
-                    or clock >= prior.get("expires_boottime", 0)):
+            else:
+                next_scopes[scope] = proof
+
+        for scope, (semantic, start, start_boot, expiry, end) in accepted.items():
+            prior = next_scopes.get(scope)
+            if prior is None:
                 prior = {"proof_ref": secrets.token_urlsafe(18), "semantic_ref": semantic,
-                         "started_at": stamp}
-            lifetime = freshness.get(scope, float(self.freshness_s))
-            next_scopes[scope] = {**prior, "last_observed_at": stamp,
-                                  "expires_boottime": clock + lifetime,
-                                  "fresh_until": to_z(now + timedelta(seconds=lifetime))}
-        clean_windows = [{k: v for k, v in window.items() if k != "_lease_seconds"}
-                         for window in windows or []]
-        fingerprint = _json({"healthy": healthy, "windows": clean_windows})
-        published_windows = [
-            {**window, "panes": [
-                {**pane, "work_proof_ref": next_scopes[
-                    opaque("work-scope", pane["pane_ref"])
-                ]["proof_ref"]}
-                for pane in window["panes"]
-            ]}
-            for window in clean_windows
-        ]
+                         "started_at": _sample_stamp(end), "last_observed_at": _sample_stamp(end)}
+            else:
+                # A request's lower bound can confirm history, never backdate it.
+                confirmed = parse_ts(prior["last_observed_at"])
+                if start > confirmed:
+                    prior = {**prior, "last_observed_at": _sample_stamp(start)}
+            next_scopes[scope] = {
+                **prior, "expires_boottime": expiry,
+                "fresh_until": _sample_stamp(start + timedelta(seconds=expiry - start_boot)),
+            }
+
+        clean_windows = _public(windows or [])
+        published_windows = []
+        for window in clean_windows:
+            panes = []
+            for pane in window["panes"]:
+                proof = next_scopes.get(opaque("work-scope", pane["pane_ref"]))
+                panes.append({**pane, **({"work_proof_ref": proof["proof_ref"]} if proof else {})})
+            published_windows.append({**window, "panes": panes})
+        fingerprint = _json({"healthy": healthy, "windows": published_windows})
         wrote = 0
         with store.batch():
             if fingerprint != self.fingerprint or closed or self.snapshot_id is None:
@@ -123,5 +197,45 @@ class ObservationWriter:
             store.set_meta("tern_observation", _json({"run_ref": self.run_ref,
                 "snapshot_id": self.snapshot_id, "healthy": healthy, "scopes": next_scopes}))
         self.scopes = next_scopes
-        self.last_clock = clock
+        self.public_windows = published_windows
+        self.healthy = healthy
         return wrote
+
+    def expire(self, store: Store) -> int:
+        """Seal expired scopes once, without publishing healthy heartbeats."""
+        clock = _clock()
+        expired = {scope for scope, proof in self.scopes.items()
+                   if clock >= proof["expires_boottime"]}
+        if not expired:
+            return 0
+        for scope in expired:
+            self.watermarks[scope] = max(clock, self.watermarks.get(scope, 0.0))
+        closed = [{"proof_ref": self.scopes[scope]["proof_ref"],
+                   "confirmed_through": self.scopes[scope]["last_observed_at"]}
+                  for scope in sorted(expired)]
+        remaining = {scope: proof for scope, proof in self.scopes.items() if scope not in expired}
+        windows = []
+        for window in self.public_windows:
+            panes = []
+            for pane in window["panes"]:
+                if opaque("work-scope", pane["pane_ref"]) in expired:
+                    pane = {key: value for key, value in pane.items() if key != "work_proof_ref"}
+                panes.append(pane)
+            windows.append({**window, "panes": panes})
+        with store.batch():
+            snapshot_id = store.append("tern_snapshot", {
+                "version": 1, "run_ref": self.run_ref,
+                "state": "observed" if self.healthy else "unknown",
+                "windows": windows, "closed": closed,
+            }, ts=to_z(datetime.now(UTC)))
+            store.set_meta("tern_observation", _json({"run_ref": self.run_ref,
+                "snapshot_id": snapshot_id, "healthy": self.healthy, "scopes": remaining}))
+        self.snapshot_id = snapshot_id
+        self.scopes = remaining
+        self.public_windows = windows
+        self.fingerprint = _json({"healthy": self.healthy, "windows": windows})
+        return 1
+
+    def shutdown(self, store: Store) -> int:
+        """Seal remaining proofs at their last genuine confirmation."""
+        return self.publish(store, None)

@@ -64,35 +64,65 @@ def clear_context(event: Event) -> Event:
 
 
 def normalize_focus(events: list[Event], snapshots: list[Event], raw_meta: str | None,
-                    horizon: datetime) -> tuple[list[Event], set[str]]:
+                    horizon: datetime, *, context_cuts: set[str] | None = None
+                    ) -> tuple[list[Event], set[str]]:
     """Cut expired context at last genuine observation; native focus remains intact."""
     ends = proof_ends(snapshots, raw_meta)
     ordered = sorted(events, key=lambda e: (e.ts, e.id))
     result: list[Event] = []
     cuts: set[str] = set()
+    # Remember the last proven context across a knowledge gap. A replacement
+    # proof is not itself a human switch, but native or semantic changes are.
+    last_proven: Event | None = None
+    gap = False
+    previous: Event | None = None
     for index, event in enumerate(ordered):
         context = event.payload.get("context")
-        if not isinstance(context, dict) or context.get("source") != "tern":
+        is_tern = isinstance(context, dict) and context.get("source") == "tern"
+        if isinstance(context, dict) and is_tern and gap and last_proven and previous:
+            old_context = last_proven.payload.get("context")
+            native_fields = ("app", "source", "window_id", "pid")
+            if (all(event.payload.get(k) == previous.payload.get(k) for k in native_fields)
+                    and isinstance(old_context, dict)
+                    and context.get("ref") == old_context.get("ref")):
+                if context_cuts is not None:
+                    context_cuts.add(event.ts)
+                if event.payload.get("title") == previous.payload.get("title"):
+                    cuts.add(event.ts)
+        if not is_tern:
+            if (last_proven is not None and previous is not None
+                    and all(event.payload.get(k) == previous.payload.get(k)
+                            for k in ("app", "source", "window_id", "pid"))
+                    and event.payload.get("app") == "so.stencil.tern"):
+                if context_cuts is not None:
+                    context_cuts.add(event.ts)
+                if event.payload.get("title") == previous.payload.get("title"):
+                    cuts.add(event.ts)
             result.append(event)
+            if last_proven is not None:
+                gap = True
+            previous = event
             continue
+        assert isinstance(context, dict)
         ref = context.get("proof_ref")
         end = ends.get(ref) if isinstance(ref, str) else None
         start = parse_ts(event.ts)
         next_time = parse_ts(ordered[index + 1].ts) if index + 1 < len(ordered) else horizon
         if end is None or end <= start:
             result.append(clear_context(event))
+            gap = True
         else:
             result.append(event)
+            last_proven = event
+            gap = False
             if end < min(next_time, horizon):
                 stamp = to_z(end)
                 result.append(replace(clear_context(event), ts=stamp))
                 cuts.add(stamp)
-                if index + 1 < len(ordered):
-                    following = ordered[index + 1]
-                    if (following.payload.get("app") == event.payload.get("app")
-                            and following.payload.get("window_id")
-                            == event.payload.get("window_id")):
-                        cuts.add(following.ts)
+                if context_cuts is not None:
+                    context_cuts.add(stamp)
+                gap = True
+        previous = event
     return result, cuts
 
 
