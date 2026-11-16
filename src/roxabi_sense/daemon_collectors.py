@@ -114,6 +114,8 @@ def build_collectors(cfg: SenseConfig) -> list[Collector]:
     use_logind = cfg.idle and cfg.idle_backend in {"logind", "auto"}
     cols = build_poll_collectors(cfg, logind_idle=use_logind)
     if cfg.focus:
+        from roxabi_sense.collectors.tern.collector import TernCollector
+        cols.append(TernCollector())
         from roxabi_sense.collectors.focus.select import select_probe
 
         probe = select_probe()

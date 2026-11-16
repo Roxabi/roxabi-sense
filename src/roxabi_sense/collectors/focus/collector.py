@@ -5,17 +5,21 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from roxabi_sense.collectors.focus.coverage import CoverageWriter
 from roxabi_sense.collectors.focus.probes.atspi import AtspiFocusProbe
 from roxabi_sense.collectors.focus.probes.cosmic import CosmicFocusProbe
 from roxabi_sense.collectors.focus.protocol import FocusProbe, FocusWindow, raw_dicts_to_windows
+from roxabi_sense.collectors.focus.tern import tern_context
+from roxabi_sense.collectors.tern.context import split_marker
 from roxabi_sense.store import Store
 from roxabi_sense.util.agent_link import find_agent_link
 from roxabi_sense.util.mux import list_mux_agent_panes
 from roxabi_sense.util.proc import children_map, resolve_app_name
 from roxabi_sense.util.session_registry import load_all_sessions
+from roxabi_sense.util.time import to_z_precise
 from roxabi_sense.util.titles import normalize_title, sanitize_display
 
 KIND = "focus"
@@ -24,6 +28,11 @@ TickMode = Literal["full", "focus", "desktop"]
 
 # Back-compat alias used by tests / older imports
 WindowInfo = FocusWindow
+
+
+def _observed_at() -> str:
+    """Timestamp actual focus publication without changing SQLite's coarse ordering."""
+    return to_z_precise(datetime.now(UTC))
 
 
 def _agent_key(agent: dict[str, Any] | None) -> str:
@@ -136,7 +145,9 @@ class FocusCollector:
         t0: float,
         source: str | None,
     ) -> int:
-        windows = self._enrich(raw, focus_only=(mode == "focus"))
+        src = source if source is not None else self.backend_source
+        context = tern_context(store, self._focus_probe, src, raw)
+        windows = self._enrich(raw, focus_only=(mode == "focus"), context=context)
         self.last_probe_ms = (
             probe_ms if probe_ms is not None else int((time.monotonic() - t0) * 1000)
         )
@@ -144,7 +155,6 @@ class FocusCollector:
         store.set_meta("focus_probe_count", str(self.probe_count))
         store.set_meta("focus_probe_last_ms", str(self.last_probe_ms))
         store.set_meta("focus_probe_last_mode", mode)
-        src = source if source is not None else self.backend_source
 
         initialized_wrote = self._coverage.initialize(store)
         if isinstance(self._focus_probe, CosmicFocusProbe) and src == "cosmic":
@@ -181,7 +191,8 @@ class FocusCollector:
             return 0
         active = active_windows[0]
         focus_key = (
-            active.app, active.title, active.pid, active.window_id, _agent_key(active.agent)
+            active.app, active.title, active.pid, active.window_id, _agent_key(active.agent),
+            json.dumps(active.context, sort_keys=True, separators=(",", ":")),
         )
         if focus_key == self._last_focus_key:
             return 0
@@ -199,28 +210,36 @@ class FocusCollector:
             body["title_raw"] = active.title_raw
         if active.agent:
             body["agent"] = active.agent
+        if active.context:
+            body["context"] = active.context
+        body.update(self._coverage.native_evidence(self._focus_probe, source, active))
+        body["_observed_at"] = _observed_at()
         store.append(KIND, body)
         return 1
 
-    def _enrich(self, windows: list[FocusWindow], *, focus_only: bool) -> list[FocusWindow]:
-        sessions = self._sessions_loader()
-        tree = children_map()
-        panes = list_mux_agent_panes()
+    def _enrich(
+        self, windows: list[FocusWindow], *, focus_only: bool,
+        context: dict[str, Any] | None,
+    ) -> list[FocusWindow]:
+        generic = any(w.app != "so.stencil.tern" and (not focus_only or w.active) for w in windows)
+        sessions = self._sessions_loader() if generic else []
+        tree = children_map() if generic else {}
+        panes = list_mux_agent_panes() if generic else []
         out: list[FocusWindow] = []
         for w in windows:
             if focus_only and not w.active:
                 continue
             app = resolve_app_name(w.app, w.pid)
-            raw = sanitize_display(w.title)
+            is_tern = w.app == "so.stencil.tern"
+            _, display_title = split_marker(w.title) if is_tern else (None, w.title)
+            raw = sanitize_display(display_title)
             title = normalize_title(raw)
-            agent = find_agent_link(
-                w.pid,
-                app=app,
-                title=title,
-                sessions=sessions,
-                tree=tree,
-                panes=panes,
+            selected_context = context if is_tern and w.active else None
+            agent = (selected_context or {}).get("agent") if is_tern else find_agent_link(
+                w.pid, app=app, title=title, sessions=sessions, tree=tree, panes=panes,
             )
+            stored_context = ({k: v for k, v in selected_context.items() if k != "agent"}
+                              if selected_context else None)
             out.append(
                 FocusWindow(
                     app=app,
@@ -231,6 +250,7 @@ class FocusCollector:
                     title_raw=raw if raw != title else None,
                     agent=agent,
                     window_id=w.window_id,
+                    context=stored_context,
                 )
             )
         return out

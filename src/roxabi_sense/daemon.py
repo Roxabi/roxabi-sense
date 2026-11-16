@@ -58,6 +58,13 @@ def run_daemon(cfg: SenseConfig) -> int:
     store.set_meta("atspi_agent", "n/a")
     store.set_meta("last_tick", _utc_stamp())
     write_session_bound_meta(store)
+    tern_col = None
+    if focus is not None:
+        from roxabi_sense.collectors.tern.collector import TernCollector
+
+        tern_col = TernCollector()
+        tern_col.start(store)
+
 
     if focus_rt is not None:
         focus_rt.select_initial(store)
@@ -141,6 +148,7 @@ def run_daemon(cfg: SenseConfig) -> int:
             store=store,
             focus=focus,
             focus_rt=focus_rt,
+            tern_collector=tern_col,
             poll_collectors=poll_collectors,
             use_wl=use_wl,
             atspi_q=atspi_q,
@@ -176,6 +184,11 @@ def collect_once(cfg: SenseConfig) -> int:
         if cfg.focus and focus_owner is not None:
             from roxabi_sense.collectors.focus import FocusCollector
             from roxabi_sense.collectors.focus.runtime import FocusRuntime
+            from roxabi_sense.collectors.tern.collector import TernCollector
+
+            tern_col = next((c for c in collectors if isinstance(c, TernCollector)), None)
+            if tern_col is not None:
+                tern_col.start(store)
 
             focus_col = next(
                 (c for c in collectors if isinstance(c, FocusCollector)), None

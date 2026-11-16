@@ -85,10 +85,24 @@ def main(argv: list[str] | None = None) -> int:
     p_tr.add_argument("--path", type=Path, default=None, help="trace jsonl path")
     p_tr.add_argument("--json", action="store_true", help="JSON summary")
 
+    p_bridge = sub.add_parser("tern-bridge", help="Manage the Tern window identity bridge")
+    p_bridge.add_argument(
+        "action", choices=("register", "renew", "unregister", "install", "remove")
+    )
+
     args = parser.parse_args(argv)
     if not args.cmd:
         parser.print_help()
         return 0
+
+    if args.cmd == "tern-bridge":
+        if args.action in ("install", "remove"):
+            from roxabi_sense.collectors.tern.bridge_install import cli as bridge_install_cli
+
+            return bridge_install_cli(args.action)
+        from roxabi_sense.collectors.tern.bridge import cli as bridge_cli
+
+        return bridge_cli(args.action)
 
     try:
         cfg = load_config(args.config)

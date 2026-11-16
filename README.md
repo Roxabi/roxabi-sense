@@ -117,6 +117,52 @@ which sense                   # typically ~/.local/bin/sense
 #    sense config set nats.enabled true
 ```
 
+### Tern window identity (optional)
+
+With Tern and the stable `sense` executable on PATH, explicitly install the
+window-only companion with `sense tern-bridge install`; remove its owned copy
+with `sense tern-bridge remove`. These commands use Tern's plugin CLI, which
+requests a plugin reload. They refuse an unowned or modified copy and do not
+change Tern settings. A disabled plugin or a competing earlier title formatter
+can prevent attribution; Sense does not change their order or enable plugins.
+
+The plugin prefixes a short random marker to the window title and refreshes a
+private, short-lived registration under `$XDG_RUNTIME_DIR`. Sense discovers
+client routes from live registrations or client inventory, then reads actual
+window and pane metadata through explicit routes, including the empty
+first-window key when applicable. No particular window must stay open.
+The marker must match an unambiguous native window and exact Tern client
+incarnation; missing, expired or conflicting evidence leaves Tern context
+unknown without removing native app focus. Pane work can still be observed
+without a marker. Both Sense and Tern must address the same daemon endpoint.
+It reads metadata, not terminal contents or conversation files. Restarting or
+reloading generates new markers; expired registrations cannot be renewed.
+
+The installed Tern SDK may not wake a quiet window for a timer. As a
+workaround, each active window keeps one bounded Sense renewal helper waiting
+between successful registrations; each renewal starts a new helper. Unload may
+briefly overlap it with one terminal, token-specific unregister helper. An
+initial registration still in flight can leave an unpublished record until its
+short BOOTTIME lease expires; without its marker it cannot identify a window.
+This adds helper startups and one waiting process per active window. Remove the
+workaround only once the installed SDK passes both quiet-window timer and
+quiet-reload bootstrap checks; it does not fix the SDK itself.
+
+To smoke-check the owned copy without contacting the running daemon, use an
+isolated configuration and a nonexistent daemon socket:
+
+```sh
+smoke_dir="$(mktemp -d)"
+mkdir -p "$smoke_dir/config"
+env TERN_CONFIG_DIR="$smoke_dir/config" TERN_DAEMON_SOCKET="$smoke_dir/no-daemon.sock" \
+  sense tern-bridge install
+env TERN_CONFIG_DIR="$smoke_dir/config" TERN_DAEMON_SOCKET="$smoke_dir/no-daemon.sock" \
+  sense tern-bridge remove
+```
+
+This checks copy/removal only, not live window attribution or reload. Inspect
+the isolated directory before removing it.
+
 ### MCP host registration (Grok + Claude)
 
 **Prereq:** steps 1–3 above — `which sense` resolves, `sense doctor` is green (daemon + DB + MCP SDK). MCP does **not** start collectors; empty tools ⇒ fix data plane first.
@@ -240,6 +286,9 @@ Contributor / in-tree workflow (not for host MCP config):
 cd roxabi-sense && uv sync --extra mcp
 uv run sense status
 ```
+
+The Tern companion's behavioral tests require a Lua 5.4 executable on PATH.
+They are optional locally when Lua is absent; CI requires and runs them.
 
 No Podman required on the laptop for V1. M₂ may use the same user unit. M₁ host-sensor path (services snapshot only) is a later collector, not a Quadlet of this whole app.
 
