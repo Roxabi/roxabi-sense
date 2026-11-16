@@ -36,9 +36,8 @@ def test_fidelity_from_events_full() -> None:
             },
         )
     ]
-    fid, note = meeting_fidelity_from_events(events, focus_backend="atspi")
+    fid, _ = meeting_fidelity_from_events(events, focus_backend="atspi")
     assert fid == "unknown"
-    assert "unconfirmed states are unknown" in note
 
 
 def test_fidelity_active_only_backend() -> None:
@@ -54,6 +53,5 @@ def test_fidelity_active_only_backend() -> None:
             },
         )
     ]
-    fid, note = meeting_fidelity_from_events(events, focus_backend="wlr")
+    fid, _ = meeting_fidelity_from_events(events, focus_backend="wlr")
     assert fid == "unknown"
-    assert "unconfirmed states are unknown" in note

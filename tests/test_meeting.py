@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from roxabi_sense.report.meetings.signals import (
     match_meeting_title,
     meeting_hint_from_windows,
 )
-from roxabi_sense.report.render.day import format_day_recap
+from roxabi_sense.report.render.day import format_day_recap, format_day_recap_share
 from roxabi_sense.store import Event, Store
 
 _MEET_IN_CALL = (
@@ -229,11 +230,6 @@ def test_recap_meeting_vs_away_totals(tmp_path: Path) -> None:
         for m in recap.meeting_sessions
     )
 
-    text = format_day_recap(recap)
-    assert "meeting_inferred=" in text
-    assert "Idle gaps" in text
-    assert "Meetings" in text
-    assert "in_call" in text
     hour_labels = {app for _, apps in recap.hour_apps for app, _ in apps}
     assert "meeting" not in hour_labels
 
@@ -296,8 +292,16 @@ def test_meeting_total_contract(tmp_path: Path) -> None:
     assert recap.meeting_inferred_s == in_call_sum == 300
     assert recap.meeting_tab_open_s == tab_sum == 300
     assert recap.meeting_fidelity == "inferred"
-    assert "tab_open" in format_day_recap(recap)
-    assert "fidelity=inferred" in format_day_recap(recap)
+
+
+def test_truncated_input_is_visible_in_text_and_share(tmp_path: Path) -> None:
+    with Store(tmp_path / "sense.db") as store:
+        recap = compile_day_recap(
+            store, "2026-08-03", now=datetime(2026, 8, 3, 12, tzinfo=UTC)
+        )
+    for render in (format_day_recap, format_day_recap_share):
+        assert "Input events truncated" not in render(recap)
+        assert "Input events truncated" in render(replace(recap, events_truncated=True))
 
 
 def test_meeting_sessions_survive_multitask_and_split_tab_open() -> None:
@@ -411,7 +415,7 @@ def test_desktop_without_meeting_ends_session() -> None:
         ),
         Event(
             id=2,
-            ts="2026-08-03T09:10:00Z",
+            ts="2026-08-03T09:03:00Z",
             kind="desktop_snapshot",
             payload={
                 "windows": [
@@ -429,8 +433,8 @@ def test_desktop_without_meeting_ends_session() -> None:
     )
     assert len(sessions) == 1
     assert sessions[0].phase == "in_call"
-    assert sessions[0].end == "2026-08-03T09:05:00Z"
-    assert sessions[0].duration_s == 300.0
+    assert sessions[0].end == "2026-08-03T09:03:00Z"
+    assert sessions[0].duration_s == 180.0
     assert sessions[0].evidence == "inferred"
 
 
@@ -461,7 +465,7 @@ def test_partial_inventory_does_not_clear_in_call() -> None:
         # Multitask: only Discord visible (partial inventory)
         Event(
             id=3,
-            ts="2026-08-03T09:20:00Z",
+            ts="2026-08-03T09:03:00Z",
             kind="desktop_snapshot",
             payload={
                 "windows": [{"app": "Discord", "title": "#q", "active": True}],

@@ -12,11 +12,12 @@ from datetime import datetime
 from itertools import pairwise
 from typing import Any
 
-from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
+from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, _idle_mode, away_segments
 from roxabi_sense.report.dwell.aggregate import hour_apps, top_titles
 from roxabi_sense.report.dwell.current_attention import CurrentAttention, resolve_current_attention
 from roxabi_sense.report.dwell.repos import HERDR_KIND, AgentRepoTime, attribute_repos
 from roxabi_sense.report.dwell.stays import TerminalStayStats, terminal_stay_stats
+from roxabi_sense.report.dwell.truncation import clip_inferred, focus_boundary
 from roxabi_sense.report.enrich import (
     AgentSessionRow,
     MediaTrack,
@@ -96,7 +97,6 @@ class DayRecap:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-
 def compile_day_recap(
     store: Store,
     day: str | None = None,
@@ -131,8 +131,13 @@ def compile_day_recap(
         evidence.compile_day_meetings(store, events, day_start, meeting_end)
     )
     truncated = truncated or len(raw_events) >= _DAY_EVENT_LIMIT
+    focus_end = focus_boundary(events, day_start, horizon) if truncated else horizon
     if truncated:
         meeting_coverage = []
+        inferred_sessions = clip_inferred(inferred_sessions, focus_end)
+        sessions = sorted(
+            evidence.observed_sessions(observed) + inferred_sessions, key=lambda m: m.start
+        )
     away = annotate_away_with_meetings(
         away_segments(
             [prior_coverage, *events] if prior_coverage is not None else events,
@@ -168,8 +173,8 @@ def compile_day_recap(
             focus_ev.insert(0, carried)
     raw_coverage = list(coverage)
     latest_coverage = coverage[-1] if coverage else None
-    overall_coverage = store.last_by_kind("focus_coverage")
-    raw_observation = store.get_meta("focus_observation")
+    overall_coverage = store.last_by_kind("focus_coverage") if not truncated else None
+    raw_observation = store.get_meta("focus_observation") if not truncated else None
     if (
         latest_coverage is not None
         and overall_coverage is not None
@@ -197,10 +202,9 @@ def compile_day_recap(
             kind="focus_coverage",
             payload={"state": "unknown", "source": latest_coverage.payload.get("source")},
         ))
-    segments = focus_segments(focus_ev, away, horizon=horizon, coverage_events=coverage)
+    segments = focus_segments(focus_ev, away, horizon=focus_end, coverage_events=coverage)
     attn = attention_segments(segments)
     stays = terminal_stay_stats(attn)
-
     apps = top_apps(segments, limit=20)
     time_by_app = [(a.app, a.seconds) for a in apps]
     repos = attribute_repos(
@@ -235,7 +239,9 @@ def compile_day_recap(
     title_sw = sum(a.end == b.start for a, b in pairwise(segments))
     app_sw = switch_count(segments, key=lambda s: s.app)
     ctx_sw = switch_count(attn)
-    active_focus, active_quality = current_focus(status_snapshot(store), now=horizon)
+    active_focus, active_quality = (
+        current_focus(status_snapshot(store), now=horizon) if not truncated else (None, "unknown")
+    )
     current_attention = resolve_current_attention(
         current=active_focus, quality=active_quality, focus=raw_focus, coverage=raw_coverage,
         attention=attn, away=away, day_start=parse_ts(start), now=horizon,
@@ -269,7 +275,7 @@ def compile_day_recap(
         top_apps=apps,
         time_by_repo=repos.focus,
         agent_time_by_repo=repos.agents,
-        focused_repo_now=repos.focused_repo_now,
+        focused_repo_now=None if truncated else repos.focused_repo_now,
         top_titles=top_titles(segments, limit=12),
         agent_sessions=agent_sessions(events),
         processes_seen=processes_seen(events),
@@ -278,7 +284,7 @@ def compile_day_recap(
         hour_apps=hour_apps(segments, away, meetings=sessions),
         session_shape=session_shape(attn, away),
         focus_coverage_quality=(
-            "bounded"
+            "unknown" if truncated else "bounded"
             if raw_observation and coverage
             and all(e.payload.get("state") != "legacy_unverified" for e in coverage)
             and all(e.ts >= coverage[0].ts for e in focus_ev)
@@ -288,11 +294,3 @@ def compile_day_recap(
     )
 
 
-def _idle_mode(modes: set[str], has_away: bool) -> str:
-    if any(m.startswith("wayland") for m in modes):
-        return "wayland-idle"
-    if "logind" in modes:
-        return "logind"
-    if "degraded-gap" in modes:
-        return "degraded-gap"
-    return "mixed" if has_away else "none"

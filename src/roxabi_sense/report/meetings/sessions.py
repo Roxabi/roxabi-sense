@@ -130,7 +130,10 @@ def meeting_annotation_now(
     focus_backend: str | None = None,
 ) -> dict[str, Any]:
     """Return fresh observed state and bounded legacy inference separately."""
-    from roxabi_sense.report.meetings.evidence import compile_observations
+    from roxabi_sense.report.meetings.evidence import (
+        compile_observations,
+        unknown_meeting_annotation,
+    )
 
     horizon = now if now is not None else datetime.now(UTC)
     if horizon.tzinfo is None:
@@ -141,13 +144,14 @@ def meeting_annotation_now(
         (s for s in reversed(inferred) if parse_ts(s.start) <= horizon <= parse_ts(s.end)),
         None,
     )
-    return {
+    result = unknown_meeting_annotation()
+    result.update({
         "phase": phase,
         "inferred_phase": active.phase if active else None,
         "coverage": "known" if known else "unknown",
         "fidelity": "observed" if known else "partial" if phase == "in_call" else "unknown",
-        "fidelity_note": "Chrome Google Meet observations only; unconfirmed states are unknown.",
-    }
+    })
+    return result
 
 
 def format_meeting_sessions(
@@ -164,7 +168,7 @@ def format_meeting_sessions(
     """Human-readable meeting block — same phase names as JSON (ADR-004)."""
     if not sessions and not fidelity:
         return []
-    head = f"Meetings (parallel to focus; observed={fmt_dur(in_call_s)}"
+    head = f"Meeting evidence segments (parallel to focus; observed={fmt_dur(in_call_s)}"
     if tab_open_s > 0:
         head += f" tab_open={fmt_dur(tab_open_s)}"
     head += ")"

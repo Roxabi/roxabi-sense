@@ -122,6 +122,112 @@ def test_observation_interruption_never_bridges_joined_time(
     assert recap["meeting_quality"] == "partial"
 
 
+def test_new_unknown_document_does_not_close_prior_joined_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "sense.db"
+    with Store(db) as store:
+        start = _start(store)
+        _registry(store, start, SOURCE)
+        _snapshot(store, start, 0, 0, [(TAB_A, "joined")])
+        _snapshot(store, start, 5, 1, [(TAB_B, "unknown")])
+
+    recap = _recap(db, monkeypatch, start + timedelta(seconds=5))
+    assert recap["meeting_total_s"] == 0
+    assert recap["meeting_coverage_s"] == 0
+    assert recap["meeting_unknown_s"] == 5
+    assert recap["meeting_quality"] == "unknown"
+
+
+def test_focus_partially_overlaps_simultaneous_observed_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "sense.db"
+    with Store(db) as store:
+        start = _start(store)
+        _registry(store, start, SOURCE)
+        store.append("idle", {"idle": False}, ts=to_z(start))
+        store.append(
+            "focus_coverage",
+            {"state": "observed", "source": "cosmic", "window_id": "1:1"},
+            ts=to_z(start + timedelta(seconds=2)),
+        )
+        store.append(
+            "focus", {"app": "editor", "source": "cosmic", "window_id": "1:1"},
+            ts=to_z(start + timedelta(seconds=2)),
+        )
+        store.append(
+            "focus_coverage",
+            {"state": "unknown", "source": "cosmic", "window_id": "1:1"},
+            ts=to_z(start + timedelta(seconds=12)),
+        )
+        _snapshot(store, start, 0, 0, [])
+        _snapshot(store, start, 5, 1, [(TAB_A, "joined")])
+        _snapshot(store, start, 8, 2, [(TAB_A, "joined"), (TAB_B, "joined")])
+        _snapshot(store, start, 10, 3, [(TAB_A, "not_joined"), (TAB_B, "joined")])
+        _snapshot(store, start, 15, 4, [(TAB_A, "not_joined"), (TAB_B, "not_joined")])
+        _snapshot(store, start, 20, 5, [])
+
+    recap = _recap(db, monkeypatch, start + timedelta(seconds=20))
+    assert recap["meeting_total_s"] == 10
+    assert recap["meeting_coverage_s"] == 20
+    assert recap["meeting_unknown_s"] == 0
+    assert recap["focus_in_meeting_s"] == 7
+    assert recap["focus_outside_meeting_s"] == 3
+    assert recap["activity_union_s"] == 13
+
+
+def test_expected_source_addition_and_removal_changes_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "sense.db"
+    with Store(db) as store:
+        start = _start(store)
+        _registry(store, start, SOURCE)
+        _snapshot(store, start, 0, 0, [])
+        _snapshot(store, start, 5, 1, [])
+        store.append(
+            "meeting_sources",
+            {"v": 1, "scope": "chrome_google_meet", "sources": [SOURCE, OTHER_SOURCE]},
+            ts=to_z(start + timedelta(seconds=5)),
+        )
+        _snapshot(store, start, 10, 2, [])
+        _snapshot(store, start, 10, 0, [], source=OTHER_SOURCE)
+        _snapshot(store, start, 15, 3, [])
+        _snapshot(store, start, 15, 1, [], source=OTHER_SOURCE)
+        store.append(
+            "meeting_sources",
+            {"v": 1, "scope": "chrome_google_meet", "sources": [SOURCE]},
+            ts=to_z(start + timedelta(seconds=15)),
+        )
+        _snapshot(store, start, 20, 4, [])
+
+    recap = _recap(db, monkeypatch, start + timedelta(seconds=20))
+    assert recap["meeting_total_s"] == 0
+    assert recap["meeting_coverage_s"] == 15
+    assert recap["meeting_unknown_s"] == 5
+    assert recap["meeting_quality"] == "partial"
+
+
+def test_meeting_carry_in_is_clipped_at_midnight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "sense.db"
+    with Store(db) as store:
+        start = _start(store)
+        _registry(store, start - timedelta(seconds=9), SOURCE)
+        _snapshot(store, start, -5, 0, [(TAB_A, "joined")])
+        _snapshot(store, start, 0, 1, [(TAB_A, "joined")])
+        _snapshot(store, start, 5, 2, [(TAB_A, "not_joined")])
+        _snapshot(store, start, 10, 3, [])
+
+    recap = _recap(db, monkeypatch, start + timedelta(seconds=10))
+    assert recap["meeting_total_s"] == 5
+    assert recap["meeting_coverage_s"] == 10
+    assert recap["meeting_unknown_s"] == 0
+    assert recap["activity_union_s"] == 5
+
+
 def test_missing_registered_source_is_unknown_not_zero_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

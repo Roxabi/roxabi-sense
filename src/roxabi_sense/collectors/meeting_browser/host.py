@@ -10,11 +10,14 @@ import struct
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
-from roxabi_sense.config import SenseConfig
+from roxabi_sense.collectors.meeting_browser.source_lock import SourceLock
+from roxabi_sense.config import ConfigError, SenseConfig, load_config
 from roxabi_sense.store import Store
 from roxabi_sense.store.meeting_protocol import (
+    CONFLICTS_META,
     MAX_FRAME_BYTES,
     SCOPE,
     validate_sources,
@@ -63,7 +66,41 @@ def _registered(store: Store, source_id: str, extension_id: str) -> bool:
     )
 
 
-def run_host(cfg: SenseConfig, source_id: str, extension_id: str, origin: str) -> int:
+def _conflicts(store: Store) -> dict:
+    raw = store.get_meta(CONFLICTS_META)
+    value = json.loads(raw) if raw is not None else {"v": 1, "scope": SCOPE, "sources": []}
+    if not validate_sources(value):
+        raise ValueError("invalid conflict metadata")
+    return value
+
+
+def _latch(store: Store, source_id: str, extension_id: str) -> None:
+    with store.batch(immediate=True):
+        if not _registered(store, source_id, extension_id):
+            return
+        conflicts = _conflicts(store)
+        if source_id not in conflicts["sources"]:
+            conflicts["sources"].append(source_id)
+            if not validate_sources(conflicts):
+                raise ValueError("too many conflicting sources")
+            store.set_meta(CONFLICTS_META, json.dumps(conflicts))
+            store.append("meeting_snapshot", {
+                "v": 1, "scope": SCOPE, "source_id": source_id,
+                "epoch": str(uuid.uuid4()), "seq": 0, "complete": False, "tabs": [],
+            })
+
+
+def _consented(config_path: Path, db_path: Path) -> bool:
+    try:
+        current = load_config(config_path)
+        return current.meeting_browser and current.db_path.resolve() == db_path.resolve()
+    except (ConfigError, OSError, ValueError):
+        return False
+
+
+def run_host(
+    cfg: SenseConfig, source_id: str, extension_id: str, origin: str, config_path: Path
+) -> int:
     """Read one connection. Invalid origin, sequence or frame ends the epoch."""
     if (
         not cfg.meeting_browser
@@ -74,9 +111,17 @@ def run_host(cfg: SenseConfig, source_id: str, extension_id: str, origin: str) -
     epoch = str(uuid.uuid4())
     seq = 0
     previous: float | None = None
+    lock: SourceLock | None = None
     try:
         with Store(cfg.db_path) as store:
-            if not _registered(store, source_id, extension_id):
+            with store.batch(immediate=True):
+                if not _registered(store, source_id, extension_id):
+                    return 1
+                if source_id in _conflicts(store)["sources"]:
+                    return 1
+            lock = SourceLock(cfg.db_path, source_id)
+            if not lock.acquire() or lock.conflicted():
+                _latch(store, source_id, extension_id)
                 return 1
             fd = sys.stdin.fileno()
             while True:
@@ -95,17 +140,35 @@ def run_host(cfg: SenseConfig, source_id: str, extension_id: str, origin: str) -
                 payload = json.loads(raw, object_pairs_hook=_unique_object)
                 if not validate_wire(payload) or payload["seq"] != seq:
                     return 1
-                with store.batch():
+                blocked = False
+                with store.batch(immediate=True):
                     if not _registered(store, source_id, extension_id):
                         return 1
-                    store.append("meeting_snapshot", {
-                        "v": 1, "scope": SCOPE, "source_id": source_id,
-                        "epoch": epoch, "seq": seq, "complete": payload["complete"],
-                        "tabs": payload["tabs"],
-                    })
+                    if source_id in _conflicts(store)["sources"]:
+                        return 1
+                    if lock.conflicted():
+                        blocked = True
+                    elif not _consented(config_path, cfg.db_path):
+                        store.append("meeting_snapshot", {
+                            "v": 1, "scope": SCOPE, "source_id": source_id,
+                            "epoch": epoch, "seq": seq, "complete": False, "tabs": [],
+                        })
+                        return 1
+                    else:
+                        store.append("meeting_snapshot", {
+                            "v": 1, "scope": SCOPE, "source_id": source_id,
+                            "epoch": epoch, "seq": seq, "complete": payload["complete"],
+                            "tabs": payload["tabs"],
+                        })
+                if blocked:
+                    _latch(store, source_id, extension_id)
+                    return 1
                 previous = now
                 seq += 1
     except EOFError:
         return 0
     except (OSError, ValueError, TypeError, TimeoutError, json.JSONDecodeError):
         return 1
+    finally:
+        if lock is not None:
+            lock.close()

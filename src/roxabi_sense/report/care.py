@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from roxabi_sense.report.clock.pause import _last_away, _pause_clock
-from roxabi_sense.report.event_summary import cap_json_bytes
+from roxabi_sense.report.event_summary import CARE_BRIEF_MAX_BYTES, cap_json_bytes
 from roxabi_sense.report.segments import is_terminal_app
 from roxabi_sense.util.time import parse_ts
 
@@ -127,7 +127,7 @@ def compile_care_brief(
         "degraded_reason": presence.get("degraded_reason"),
         "confidence": presence.get("confidence"),
     }
-    return cap_json_bytes(
+    brief = cap_json_bytes(
         {
             "day": getattr(recap, "day", None),
             "first_event": getattr(recap, "first_event", None),
@@ -148,7 +148,7 @@ def compile_care_brief(
             "terminal_stays": terminal,
             "meetings": {
                 "minutes": round(meeting_s / 60.0, 2),
-                "count": len(in_call),
+                "observed_evidence_segments": len(in_call),
                 "inferred_minutes": round(
                     float(getattr(recap, "meeting_inferred_s", 0.0)) / 60.0, 2
                 ),
@@ -164,12 +164,14 @@ def compile_care_brief(
                 current=current,
                 pause=last_away,
                 shape=shape,
-                in_call_n=len(in_call),
                 agent_count=None if agent_body is None else int(agent_body.get("count") or 0),
                 degraded=bool(pres["degraded"]),
             ),
-        }
+        },
+        max_bytes=CARE_BRIEF_MAX_BYTES - 32,
     )
+    brief["events_truncated"] = bool(getattr(recap, "events_truncated", False))
+    return brief
 
 
 def _agent_brief(
@@ -228,7 +230,6 @@ def _brief_signals(
     current: dict[str, Any] | None,
     pause: dict[str, Any] | None,
     shape: str,
-    in_call_n: int,
     agent_count: int | None,
     degraded: bool,
 ) -> list[str]:
@@ -243,8 +244,6 @@ def _brief_signals(
         out.append("long_focus")
     if shape == "fragmented":
         out.append("high_switch_rate")
-    if in_call_n >= 3:
-        out.append("stacked_meetings")
     if agent_count == 0:
         out.append("agent_sources_idle")
     if degraded:

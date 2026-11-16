@@ -1,6 +1,7 @@
 """Compile bounded, source-scoped meeting observations without exposing identities."""
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -13,6 +14,7 @@ from roxabi_sense.report.meetings.sessions import (
 from roxabi_sense.report.meetings.signals import meeting_samples
 from roxabi_sense.store import Event, Store
 from roxabi_sense.store.meeting_protocol import (
+    CONFLICTS_META,
     CONTINUITY_SECONDS,
     validate_snapshot,
     validate_sources,
@@ -148,7 +150,8 @@ def compile_observations(
             if a < b and prev[3] and complete:
                 for tab, state in prev[4].items():
                     if state == 'joined' and (
-                        states.get(tab) in ('joined', 'not_joined') or tab not in states
+                        states.get(tab) in ('joined', 'not_joined')
+                        or (tab not in states and 'unknown' not in states.values())
                     ):
                         observed.append((a, b))
                 if 'unknown' not in prev[4].values() and 'unknown' not in states.values():
@@ -197,6 +200,15 @@ def compile_day_meetings(
     return sessions, inferred, observed, coverage, truncated
 
 
+def unknown_meeting_annotation() -> dict[str, Any]:
+    """Shared default for missing or unavailable meeting evidence."""
+    return {
+        "phase": "unknown", "inferred_phase": None, "coverage": "unknown",
+        "fidelity": "unknown", "reason": None,
+        "fidelity_note": "Chrome Google Meet observations only; unconfirmed states are unknown.",
+    }
+
+
 def meeting_annotation_for_store(store: Store, *, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     if now.tzinfo is None:
@@ -206,18 +218,47 @@ def meeting_annotation_for_store(store: Store, *, now: datetime | None = None) -
     registry = store.last_by_kind_before('meeting_sources', to_z(start))
     if registry is not None:
         events.insert(0, registry)
+    truncated = len(events) >= LIMIT
+    conflict_raw = store.get_meta(CONFLICTS_META)
+    conflict = False
+    if conflict_raw is not None:
+        try:
+            payload = json.loads(conflict_raw)
+            if not validate_sources(payload):
+                raise ValueError("invalid conflict metadata")
+            expected = next(
+                (_registry(e.payload) for e in reversed(events)
+                 if e.kind == "meeting_sources" and parse_ts(e.ts) <= now),
+                None,
+            )
+            blocked = set(payload["sources"])
+            conflict = bool(blocked & (expected or set()))
+            if conflict:
+                events = [e for e in events if e.kind != "meeting_snapshot"
+                          or e.payload.get("source_id") not in blocked]
+        except (TypeError, ValueError):
+            conflict = True
+            events = [e for e in events if e.kind != "meeting_snapshot"]
     _, _, live, known = compile_observations(events, start, now)
-    if len(events) >= LIMIT:
+    if truncated:
         live, known = 'unknown', False
     inferred = sessions_from_samples(meeting_samples(events), horizon=now)
     active = next(
         (s for s in reversed(inferred) if parse_ts(s.start) <= now <= parse_ts(s.end)), None
     )
-    return {'phase': live, 'inferred_phase': active.phase if active else None,
-            'coverage': 'known' if known else 'unknown',
-            'fidelity': 'observed' if known else 'partial' if live == 'in_call' else 'unknown',
-            'fidelity_note': 'Chrome Google Meet observations only; unconfirmed states are unknown.'
-            }
+    result = unknown_meeting_annotation()
+    result.update({
+        "phase": live, "inferred_phase": active.phase if active else None,
+        "coverage": "known" if known else "unknown",
+        "fidelity": "observed" if known else "partial" if live == "in_call" else "unknown",
+        "reason": "source_conflict" if conflict else None,
+    })
+    if conflict:
+        result["fidelity_note"] = (
+            "Source conflict: stop duplicate connectors, remove the owned registration, "
+            "and reinstall."
+        )
+    return result
 
 
 def observed_sessions(intervals: list[Interval]) -> list[MeetingSession]:

@@ -23,11 +23,7 @@ def format_day_recap_share(
     window = "—"
     if recap.first_event and recap.last_event:
         window = f"{_local_hm(recap.first_event)}–{_local_hm(recap.last_event)}"
-    meet = (
-        _fmt_dur(recap.meeting_total_s)
-        if recap.meeting_total_s > 0
-        else "—"
-    )
+    meet = _fmt_dur(recap.meeting_total_s) if recap.meeting_total_s > 0 else "—"
     shape = recap.session_shape or "—"
     ts = recap.terminal_stays
     if ts.visits:
@@ -87,6 +83,8 @@ def format_day_recap_share(
 
     n = max(len(apps), len(repos), len(titles), 0)
     blocks = [f"**sense · {recap.day}**", "", *overview]
+    if recap.events_truncated:
+        blocks.extend(["", "**Input events truncated; totals are incomplete.**"])
     if n == 0:
         return "\n".join(blocks)
 
@@ -123,6 +121,8 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
         f"window: {_fmt_span(recap.first_event, recap.last_event)}   "
         f"events={recap.event_count}   {totals}",
     ]
+    if recap.events_truncated:
+        lines.append("Input events truncated; totals are incomplete.")
     if recap.session_shape:
         lines.append(f"session_shape: {recap.session_shape}")
     lines.append(

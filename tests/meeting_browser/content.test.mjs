@@ -22,6 +22,11 @@ function observe(labels, {hidden = [], reconnecting = false} = {}) {
     getComputedStyle: () => ({display: 'block', visibility: 'visible', opacity: '1'}),
   });
   handler({kind: 'meeting-sample', nonce: 'request'}, {id: 'extension'});
+  let confirmation;
+  handler({kind: 'meeting-confirm', nonce: 'request'}, {id: 'extension'},
+    (reply) => { confirmation = reply; });
+  assert.equal(confirmation.kind, 'meeting-confirmed');
+  assert.equal(confirmation.nonce, 'request');
   return {state: result.state, basis: result.basis};
 }
 

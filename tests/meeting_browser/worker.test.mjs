@@ -21,6 +21,7 @@ function fixture() {
   const ports = [];
   let tabs = [];
   let sample = () => Promise.reject(new Error('no listener'));
+  let confirm = (_tab, message) => Promise.resolve({kind: 'meeting-confirmed', nonce: message.nonce});
   const api = {
     runtime: {
       id: 'extension',
@@ -34,11 +35,13 @@ function fixture() {
     },
     tabs: {
       query: async () => { if (tabs instanceof Error) throw tabs; return tabs; },
-      sendMessage: (...args) => sample(...args),
+      sendMessage: (tab, message, options) => message.kind === 'meeting-confirm'
+        ? confirm(tab, message, options) : sample(tab, message, options),
     },
   };
   return {api, timers, frames, ports, setTabs: (value) => { tabs = value; },
     setSample: (value) => { sample = value; },
+    setConfirm: (value) => { confirm = value; },
     respond(message, sender) { listener(message, sender); }};
 }
 
@@ -62,7 +65,7 @@ test('each complete enumeration samples anew and never replays a joined result',
   collector.stop();
 });
 
-test('rejects non-top-frame, foreign origin and stale-document replies', async () => {
+test('rejects non-top-frame, foreign origin and invalid document replies', async () => {
   const f = fixture();
   f.setTabs([{id: 4}]);
   f.setSample((_tab, message) => {
@@ -79,6 +82,59 @@ test('rejects non-top-frame, foreign origin and stale-document replies', async (
   await tick();
   assert.equal(f.frames[0].tabs[0].basis, 'no_response');
   collector.stop();
+});
+
+test('navigation rejects an old nonempty document reply within the sampling deadline', async () => {
+  const f = fixture();
+  f.setTabs([{id: 4}]);
+  let currentDocument = 'old-document';
+  f.setSample((_tab, message) => {
+    currentDocument = 'new-document';
+    f.respond(observed(message.nonce), {...sender, documentId: 'old-document'});
+    return Promise.resolve();
+  });
+  f.setConfirm((_tab, message, options) => {
+    assert.equal(options.documentId, 'old-document');
+    return options.documentId === currentDocument
+      ? Promise.resolve({kind: 'meeting-confirmed', nonce: message.nonce})
+      : Promise.reject(new Error('document no longer exists'));
+  });
+  const collector = createCollector(f.api, f.timers);
+  collector.start();
+  await tick();
+  assert.equal(f.frames.length, 0);
+  f.timers.run(2000);
+  await tick();
+  assert.equal(f.frames[0].tabs[0].basis, 'no_response');
+  collector.stop();
+});
+
+test('synchronous native write failure retries once despite stale disconnect callback', async () => {
+  const f = fixture();
+  const connect = f.api.runtime.connectNative;
+  f.api.runtime.connectNative = (name) => {
+    const port = connect(name);
+    if (f.ports.length === 1) {
+      port.postMessage = () => { throw new Error('disconnected'); };
+    }
+    return port;
+  };
+  const collector = createCollector(f.api, f.timers);
+  collector.start();
+  await tick();
+  const staleDisconnect = f.ports[0].lost;
+  f.timers.run(5000);
+  await tick();
+  assert.deepEqual(f.frames, [{v: 1, seq: 0, complete: true, tabs: []}]);
+  staleDisconnect();
+  f.timers.run(5000);
+  await tick();
+  assert.equal(f.ports.length, 2);
+  assert.deepEqual(f.frames[1], {v: 1, seq: 1, complete: true, tabs: []});
+  collector.stop();
+  staleDisconnect();
+  f.timers.run(5000);
+  assert.equal(f.ports.length, 2);
 });
 
 test('enumeration failure is incomplete and reconnection starts a fresh sequence', async () => {

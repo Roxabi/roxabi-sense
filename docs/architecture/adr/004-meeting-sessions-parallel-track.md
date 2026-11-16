@@ -38,7 +38,9 @@ to observed evidence, and stored legacy events are not rewritten.
 
 * `meeting_total_s` is the union of observed joined intervals only.
   `meeting_inferred_s` is inferred call time excluding the observed union.
-  Sessions expose `evidence` as `observed` or `inferred`.
+  Sessions expose `evidence` as `observed` or `inferred`. Observed union
+  components are evidence segments, not physical calls: gaps can split one
+  call and concurrent calls can merge.
 * Confirmed intervals require contiguous observations within eight seconds.
   Unknown, missing, stale or interrupted observations stop at the last
   confirmed point; a single joined observation contributes no historical
@@ -46,9 +48,12 @@ to observed evidence, and stored legacy events are not rewritten.
 * Coverage is scoped to all registered Chrome Google Meet sources, not all
   workstation meeting applications. A complete healthy empty enumeration is
   known no calls; absent registration, missing sources and unknown tabs are
-  unknown, not proof of no calls. Partial coverage may still contain an
-  observed lower bound. Recaps expose `meeting_coverage_s`,
-  `meeting_unknown_s`, `meeting_quality` and query truncation.
+  unknown, not proof of no calls. Conflicted sources invalidate coverage until
+  explicitly removed and reinstalled; a healthy source can still provide a
+  positive lower bound. Recaps expose `meeting_coverage_s`,
+  `meeting_unknown_s`, `meeting_quality` and event-window truncation. A truncated
+  prefix cannot certify the unseen suffix or extend focus and meeting totals
+  beyond defensible witnesses; this differs from JSON output-size truncation.
 * Focus and observed calls can overlap. `focus_in_meeting_s` and
   `focus_outside_meeting_s` describe that overlap; `activity_union_s` is their
   union with observed call time, not the sum of parallel tracks. Concurrent
@@ -69,6 +74,16 @@ connection and tab identifiers are local opaque correlation keys and must not
 appear in coarse exports or public meeting session data. A failed enumeration,
 transport loss or sequence gap invalidates coverage rather than synthesizing a
 leave. Collector facts remain separate from report interpretation.
+
+Native-host registration applies to the browser user-data directory, not an
+authenticated profile; either the supplied profile path or explicit data-root
+path locates that registration.
+Multiple profiles using the same extension ID can contend for one source. Such
+a conflict is latched as unknown rather than aging into a healthy state. Stop
+duplicate producers and complete owned removal and reinstallation to recover.
+The registered launcher pins the invoking installation, so remove and
+re-register before moving or uninstalling that executable or its environment.
+See the [operator sequence](../../../README.md#meeting-evidence).
 
 ## Consequences
 

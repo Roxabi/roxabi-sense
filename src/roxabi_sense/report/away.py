@@ -154,3 +154,13 @@ def _degraded_away(
         if seg is not None:
             out.append(seg)
     return out
+
+
+def _idle_mode(modes: set[str], has_away: bool) -> str:
+    if any(m.startswith("wayland") for m in modes):
+        return "wayland-idle"
+    if "logind" in modes:
+        return "logind"
+    if "degraded-gap" in modes:
+        return "degraded-gap"
+    return "mixed" if has_away else "none"

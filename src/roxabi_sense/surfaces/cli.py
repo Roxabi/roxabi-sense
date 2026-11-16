@@ -207,14 +207,7 @@ def _print_status(snap: StatusSnapshot, *, as_json: bool) -> int:
     for line in format_presence_lines(snap.presence):
         print(line)
     print("--- meeting ---")
-    phase = meeting.get("phase")
-    fid = meeting.get("fidelity") or "unknown"
-    if phase:
-        print(f"phase: {phase}  fidelity={fid}")
-        if meeting.get("provider"):
-            print(f"provider: {meeting['provider']}  since: {meeting.get('start') or '—'}")
-    else:
-        print(f"phase: {meeting.get('state') or 'unknown'}  fidelity={fid}")
+    print(f"phase: {meeting['phase']}  fidelity={meeting['fidelity']}")
     note = meeting.get("fidelity_note")
     if note:
         print(f"note: {note}")
@@ -232,19 +225,18 @@ def _print_status(snap: StatusSnapshot, *, as_json: bool) -> int:
 
 def _status_meeting_annotation(snap: StatusSnapshot) -> dict:
     """Live meeting annotation via report compiler (surfaces format only)."""
-    from roxabi_sense.report.meetings.evidence import meeting_annotation_for_store
+    from roxabi_sense.report.meetings.evidence import (
+        meeting_annotation_for_store,
+        unknown_meeting_annotation,
+    )
 
     if not snap.db_exists or not snap.db_path.is_file():
-        return {"phase": None, "fidelity": "unknown", "fidelity_note": "no store"}
+        return unknown_meeting_annotation()
     try:
         with Store(snap.db_path) as store:
             return meeting_annotation_for_store(store)
     except Exception:  # noqa: BLE001
-        return {
-            "phase": None,
-            "fidelity": "unknown",
-            "fidelity_note": "meeting annotation unavailable",
-        }
+        return unknown_meeting_annotation()
 
 
 if __name__ == "__main__":

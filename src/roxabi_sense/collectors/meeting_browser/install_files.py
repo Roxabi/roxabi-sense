@@ -63,19 +63,21 @@ def create_owned(path: Path, content: bytes, mode: int) -> None:
             os.close(fd)
 
 
-def files_for(profile: Path) -> tuple[Path, Path, Path]:
+def files_for(profile: Path, *, data_dir: bool = False) -> tuple[Path, Path, Path]:
     profile = safe_directory(profile)
     if profile.name in ("", ".", ".."):
-        raise ValueError("an explicit browser profile directory is required")
-    host_dir = safe_directory(profile.parent / "NativeMessagingHosts", create=True)
+        raise ValueError("an explicit browser directory is required")
+    root = profile if data_dir else profile.parent
+    host_dir = safe_directory(root / "NativeMessagingHosts", create=True)
     return (host_dir / f"{HOST_NAME}.json", host_dir / f"{HOST_NAME}.sh",
             host_dir / f"{HOST_NAME}.owner.json")
 
 
 def launcher(binary: str, config: Path, db: Path, source: str, extension: str,
-             profile: Path) -> bytes:
+             profile: Path, *, data_dir: bool = False) -> bytes:
+    flag = "--data-dir" if data_dir else "--profile"
     args = ["env", f"SENSE_DB={db}", binary, "--config", str(config), "meeting-browser",
-            "host", "--profile", str(profile), "--source-id", source, "--extension-id", extension]
+            "host", flag, str(profile), "--source-id", source, "--extension-id", extension]
     return ("#!/bin/sh\nexec " + " ".join(shlex.quote(arg) for arg in args) + ' "$@"\n').encode()
 
 

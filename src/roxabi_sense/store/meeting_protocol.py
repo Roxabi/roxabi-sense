@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 SCOPE = "chrome_google_meet"
+CONFLICTS_META = "meeting_browser_conflicts"
 CONTINUITY_SECONDS = 8
 MAX_SOURCES = 32
 MAX_TABS = 128

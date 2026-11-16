@@ -24,9 +24,13 @@
     if (prejoin) return {state: 'not_joined', basis: 'prejoin'};
     return {state: 'not_joined', basis: 'home'};
   };
-  chrome.runtime.onMessage.addListener((message, sender) => {
-    if (sender.id !== chrome.runtime.id || message?.kind !== 'meeting-sample' ||
-        typeof message.nonce !== 'string') return;
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (sender.id !== chrome.runtime.id || typeof message?.nonce !== 'string') return;
+    if (message.kind === 'meeting-confirm') {
+      sendResponse({kind: 'meeting-confirmed', nonce: message.nonce});
+      return;
+    }
+    if (message.kind !== 'meeting-sample') return;
     chrome.runtime.sendMessage({kind: 'meeting-observation', nonce: message.nonce, tab_id: tabId, ...sample()}).catch(() => {});
   });
 })();

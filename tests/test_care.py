@@ -46,6 +46,29 @@ def _recap(**kw: object) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
+def test_event_truncation_survives_json_size_cap() -> None:
+    recap = _recap(day="x" * 9000, events_truncated=True)
+    brief = compile_care_brief(recap, {}, now=NOW)
+    assert brief["truncated"] is True
+    assert brief["events_truncated"] is True
+    assert compile_care_brief(_recap(events_truncated=False), {}, now=NOW)[
+        "events_truncated"
+    ] is False
+
+
+def test_meeting_fragments_are_not_counted_as_physical_calls() -> None:
+    segments = [
+        SimpleNamespace(phase="in_call", evidence="observed"),
+        SimpleNamespace(phase="in_call", evidence="observed"),
+        SimpleNamespace(phase="in_call", evidence="observed"),
+        SimpleNamespace(phase="in_call", evidence="inferred"),
+    ]
+    brief = compile_care_brief(_recap(meeting_sessions=segments), {}, now=NOW)
+    assert brief["meetings"]["observed_evidence_segments"] == 3
+    assert "count" not in brief["meetings"]
+    assert "stacked_meetings" not in brief["signals"]
+
+
 def test_current_stretch_is_open_segment_not_day_max() -> None:
     recap = _recap(
         attention_segments=[

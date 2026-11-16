@@ -27,7 +27,13 @@ export function createCollector(api, timers = globalThis) {
         Object.keys(message).sort().join(',') !== 'basis,kind,nonce,state,tab_id' ||
         typeof message.tab_id !== 'string' || !UUID.test(message.tab_id) ||
         !PAIRS.has(`${message.state}:${message.basis}`)) return;
-    request.finish({tab_id: message.tab_id, state: message.state, basis: message.basis});
+    Promise.resolve().then(() => api.tabs.sendMessage(request.tab,
+      {kind: 'meeting-confirm', nonce: message.nonce}, {documentId: sender.documentId}))
+      .then((reply) => {
+        if (reply?.kind === 'meeting-confirmed' && reply.nonce === message.nonce) {
+          request.finish({tab_id: message.tab_id, state: message.state, basis: message.basis});
+        }
+      }).catch(() => {});
   });
 
   function sample(tab) {
@@ -62,7 +68,7 @@ export function createCollector(api, timers = globalThis) {
     } catch { tabs = []; }
     if (current !== generation || !port) return;
     try { port.postMessage({v: 1, seq: seq++, complete, tabs}); }
-    catch { disconnect(); return; }
+    catch { retry(current); return; }
     timer = timers.setTimeout(() => collect(current), CADENCE_MS);
   }
 
@@ -79,6 +85,12 @@ export function createCollector(api, timers = globalThis) {
     });
   }
 
+  function retry(current) {
+    if (current !== generation) return;
+    disconnect();
+    timer = timers.setTimeout(start, CADENCE_MS);
+  }
+
   function start() {
     disconnect();
     const current = generation;
@@ -86,14 +98,11 @@ export function createCollector(api, timers = globalThis) {
       port = api.runtime.connectNative(HOST);
       seq = 0;
       port.onDisconnect.addListener(() => {
-        if (current !== generation) return;
-        disconnect();
-        timer = timers.setTimeout(start, CADENCE_MS);
+        retry(current);
       });
       collect(current);
     } catch {
-      disconnect();
-      timer = timers.setTimeout(start, CADENCE_MS);
+      retry(current);
     }
   }
   return {start, stop: disconnect};

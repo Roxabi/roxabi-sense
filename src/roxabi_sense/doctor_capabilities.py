@@ -145,6 +145,12 @@ def _meeting_capability(cfg: SenseConfig) -> Capability:
             backend="unknown",
             reason="Chrome Google Meet evidence unavailable; coverage unknown",
         )
+    if annotation.get("reason") == "source_conflict":
+        return Capability(
+            status="unavailable",
+            backend="chrome_google_meet",
+            reason=annotation["fidelity_note"],
+        )
     if annotation.get("fidelity") == "observed":
         return Capability(
             status="available",
