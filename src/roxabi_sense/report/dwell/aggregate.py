@@ -11,7 +11,7 @@ from roxabi_sense.report.segments import FocusSegment
 from roxabi_sense.util.time import parse_ts
 
 if TYPE_CHECKING:
-    from roxabi_sense.report.meeting_sessions import MeetingSession
+    from roxabi_sense.report.meetings.sessions import MeetingSession
 
 
 def sum_by(segments: list[FocusSegment], *, key) -> list[tuple[str, float]]:
@@ -41,20 +41,24 @@ def hour_apps(
     buckets: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     def _add(start_z: str, duration_s: float, label: str) -> None:
-        remaining, cursor = duration_s, parse_ts(start_z).astimezone()
-        while remaining > 0.5:
-            hour_end = cursor.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-            slice_s = min(remaining, (hour_end - cursor).total_seconds())
-            if slice_s <= 0:
-                break
-            buckets[cursor.strftime("%H:00")][label] += slice_s
+        remaining, cursor = duration_s, parse_ts(start_z)
+        while remaining > 0:
+            local = cursor.astimezone()
+            until_hour = 3600 - (local.minute * 60 + local.second + local.microsecond / 1_000_000)
+            slice_s = min(remaining, until_hour)
+            buckets[local.strftime("%H:00")][label] += slice_s
             remaining -= slice_s
-            cursor = hour_end
-
+            cursor += timedelta(seconds=slice_s)
     for s in segments:
         _add(s.start, s.duration_s, s.app)
-    for m in meetings or []:
-        _add(m.start, m.duration_s, "meeting" if m.phase == "in_call" else "tab_open")
+    from roxabi_sense.report.meetings.evidence import union
+
+    observed = union([
+        (parse_ts(m.start), parse_ts(m.end))
+        for m in meetings or [] if m.phase == "in_call" and m.evidence == "observed"
+    ])
+    for start, end in observed:
+        _add(start.isoformat(), (end - start).total_seconds(), "meeting")
     for a in away or []:
         if meetings is not None and a.presence == "meeting":
             continue

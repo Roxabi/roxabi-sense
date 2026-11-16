@@ -62,6 +62,7 @@ class SenseConfig:
     focus: bool = True
     # Opt-in RO Cursor workspace discovery (#49) — off by default
     cursor_sessions: bool = False
+    meeting_browser: bool = False
     cursor_root: Path | None = None  # default ~/.config/Cursor
     cursor_max_workspaces: int = 20
     cursor_max_age_days: float = 30.0
@@ -143,6 +144,10 @@ def _apply_toml(cfg: SenseConfig, data: dict) -> None:
     ):
         if key in collectors:
             setattr(cfg, key, bool(collectors[key]))
+    if "meeting_browser" in collectors:
+        if type(collectors["meeting_browser"]) is not bool:
+            raise ConfigError("collectors.meeting_browser must be a boolean")
+        cfg.meeting_browser = collectors["meeting_browser"]
     if "idle_backend" in collectors:
         cfg.idle_backend = str(collectors["idle_backend"]).lower()
     if "idle_threshold_s" in collectors:

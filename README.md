@@ -110,7 +110,7 @@ systemctl --user enable --now roxabi-sense.service
 # 3. smoke / DoD
 sense doctor                  # FAIL if offline / no DB / MCP missing
 sense status                  # last_tick should refresh while daemon is up
-sense recap                   # day summary; Meetings fidelity=full|active_only
+sense recap                   # day summary; observed vs inferred meeting evidence
 which sense                   # typically ~/.local/bin/sense
 
 # 5. optional NATS (when factory Sentinelle is ready)
@@ -290,6 +290,24 @@ Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. Th
 - **Runtime demote** — if AT-SPI dies, daemon switches to next healthy probe without blocking other collectors.
 - Meta focus: `focus_backend`, `focus_status`, `session_type`, `desktop_family`, `last_focus_path`.
 - Meta idle: `idle_backend`, `idle_status`, `idle_chain_reason` (wayland → logind → noop).
+
+### Meeting evidence
+
+The opt-in Chrome Google Meet connector observes recognized call UI, not human
+attention or server-side attendance. Enable `[collectors] meeting_browser = true`
+and explicitly install the connector; it is disabled by default. Unknown or
+unsupported UI and missing or stale sources are not proof that no call occurred.
+Coverage applies only to registered Chrome Google Meet sources, not all meeting
+apps. Joined and reconnecting layouts have not been validated in a real call.
+
+`meeting_total_s` unions observed call intervals; title-derived legacy signals
+are inferred and reported separately as `meeting_inferred_s`. Recaps also expose
+coverage, unknown time and quality. A single observation has no historical
+duration; gaps stop confirmed time at the last observation. Focus remains a
+parallel track, so use `activity_union_s` rather than adding focus and meeting
+totals. See [ADR-004](docs/architecture/adr/004-meeting-sessions-parallel-track.md).
+The connector collects no meeting URLs, titles, participants, DOM text or audio;
+its opaque source and tab identifiers are excluded from coarse exports.
 
 ### Agent sessions (Grok / Claude / Herdr·OMP / optional Cursor)
 

@@ -95,7 +95,8 @@ def compile_care_brief(
         }
 
     meetings = getattr(recap, "meeting_sessions", []) or []
-    in_call = [m for m in meetings if getattr(m, "phase", None) == "in_call"]
+    in_call = [m for m in meetings if getattr(m, "phase", None) == "in_call"
+               and getattr(m, "evidence", "inferred") == "observed"]
     meeting_s = float(getattr(recap, "meeting_total_s", 0.0) or 0.0)
     agent_body, agent_reason = _agent_brief(recap, agent_snapshot_ts, n, agent_payload)
 
@@ -145,7 +146,16 @@ def compile_care_brief(
             "last_pause": last_pause,
             "minutes_since_pause": minutes_since_pause,
             "terminal_stays": terminal,
-            "meetings": {"minutes": round(meeting_s / 60.0, 2), "count": len(in_call)},
+            "meetings": {
+                "minutes": round(meeting_s / 60.0, 2),
+                "count": len(in_call),
+                "inferred_minutes": round(
+                    float(getattr(recap, "meeting_inferred_s", 0.0)) / 60.0, 2
+                ),
+                "quality": getattr(recap, "meeting_quality", "unknown"),
+                "unknown_minutes": round(float(getattr(recap, "meeting_unknown_s", 0.0)) / 60.0, 2),
+                "scope": "chrome_google_meet",
+            },
             "agent_sessions": agent_body,
             "agent_sessions_reason": agent_reason,
             "shape": shape,

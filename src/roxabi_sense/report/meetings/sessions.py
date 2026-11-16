@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from roxabi_sense.report.meeting import (
+from roxabi_sense.report.meetings.signals import (
     MeetingHint,
     MeetingPhase,
     meeting_samples,
 )
-from roxabi_sense.report.meeting_fidelity import meeting_fidelity_from_events
 from roxabi_sense.store import Event
 from roxabi_sense.util.time import parse_ts, to_z
 
@@ -27,6 +26,7 @@ class MeetingSession:
     label: str
     phase: MeetingPhase
     call_id: str | None = None
+    evidence: str = "inferred"
 
 
 def meeting_sessions(
@@ -56,6 +56,7 @@ def sessions_from_samples(
     out: list[MeetingSession] = []
     cur: MeetingHint | None = None
     cur_start: datetime | None = None
+    last_sample: datetime | None = None
 
     def close(end: datetime) -> None:
         nonlocal cur, cur_start
@@ -78,6 +79,15 @@ def sessions_from_samples(
         cur_start = None
 
     for ts, hint in samples:
+        if ts > horizon:
+            break
+        if (
+            cur is not None and last_sample is not None
+            and ts > last_sample + timedelta(seconds=300)
+        ):
+            close(last_sample + timedelta(seconds=300))
+        if hint is not None:
+            last_sample = ts
         if cur is None:
             if hint is not None:
                 cur = hint
@@ -108,7 +118,7 @@ def sessions_from_samples(
             cur = hint
 
     if cur is not None and cur_start is not None:
-        close(horizon if horizon > cur_start else cur_start)
+        close(min(horizon, (last_sample or cur_start) + timedelta(seconds=300)))
 
     return out
 
@@ -119,40 +129,25 @@ def meeting_annotation_now(
     now: datetime | None = None,
     focus_backend: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Open meeting surface at ``now`` (live path — same compiler as recap).
+    """Return fresh observed state and bounded legacy inference separately."""
+    from roxabi_sense.report.meetings.evidence import compile_observations
 
-    Returns annotations.meeting shape: phase None when not in a session.
-    Does not re-regex titles outside ``meeting_samples`` / ``meeting_sessions``.
-    """
     horizon = now if now is not None else datetime.now(UTC)
     if horizon.tzinfo is None:
         horizon = horizon.replace(tzinfo=UTC)
-    fidelity, note = meeting_fidelity_from_events(
-        events,
-        focus_backend=focus_backend,
+    _, _, phase, known = compile_observations(events, horizon - timedelta(seconds=308), horizon)
+    inferred = sessions_from_samples(meeting_samples(events), horizon=horizon)
+    active = next(
+        (s for s in reversed(inferred) if parse_ts(s.start) <= horizon <= parse_ts(s.end)),
+        None,
     )
-    base: dict[str, Any] = {
-        "phase": None,
-        "fidelity": fidelity,
-        "fidelity_note": note,
+    return {
+        "phase": phase,
+        "inferred_phase": active.phase if active else None,
+        "coverage": "known" if known else "unknown",
+        "fidelity": "observed" if known else "partial" if phase == "in_call" else "unknown",
+        "fidelity_note": "Chrome Google Meet observations only; unconfirmed states are unknown.",
     }
-    sessions = meeting_sessions(events, horizon=horizon)
-    if not sessions:
-        return base
-    for s in reversed(sessions):
-        t0, t1 = parse_ts(s.start), parse_ts(s.end)
-        if t0 <= horizon <= t1:
-            return {
-                "phase": s.phase,
-                "provider": s.provider,
-                "start": s.start,
-                "label": s.label,
-                "call_id": s.call_id,
-                "fidelity": fidelity,
-                "fidelity_note": note,
-            }
-    return base
 
 
 def format_meeting_sessions(
@@ -169,7 +164,7 @@ def format_meeting_sessions(
     """Human-readable meeting block — same phase names as JSON (ADR-004)."""
     if not sessions and not fidelity:
         return []
-    head = f"Meetings (parallel to focus; in_call={fmt_dur(in_call_s)}"
+    head = f"Meetings (parallel to focus; observed={fmt_dur(in_call_s)}"
     if tab_open_s > 0:
         head += f" tab_open={fmt_dur(tab_open_s)}"
     head += ")"
@@ -179,11 +174,11 @@ def format_meeting_sessions(
         cid = f" {m.call_id}" if m.call_id else ""
         lines.append(
             f"  {local_hm(m.start)}–{local_hm(m.end)}  {fmt_dur(m.duration_s):>8}  "
-            f"[{m.phase}] {m.provider}{cid} · {label}"
+            f"[{m.evidence} {m.phase}] {m.provider}{cid} · {label}"
         )
     if len(sessions) > limit:
         lines.append(f"  … +{len(sessions) - limit} more")
-    if fidelity and (sessions or fidelity != "unknown"):
+    if fidelity:
         note = fidelity_note or ""
         lines.append(f"  fidelity={fidelity}  {note}".rstrip())
     return lines

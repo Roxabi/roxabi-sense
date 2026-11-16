@@ -7,16 +7,16 @@ from pathlib import Path
 
 from roxabi_sense.report.away import AwaySegment
 from roxabi_sense.report.day import compile_day_recap
-from roxabi_sense.report.meeting import (
+from roxabi_sense.report.meetings.sessions import (
+    MeetingSession,
+    meeting_sessions,
+    sessions_from_samples,
+)
+from roxabi_sense.report.meetings.signals import (
     MeetingHint,
     annotate_away_with_meetings,
     match_meeting_title,
     meeting_hint_from_windows,
-)
-from roxabi_sense.report.meeting_sessions import (
-    MeetingSession,
-    meeting_sessions,
-    sessions_from_samples,
 )
 from roxabi_sense.report.render.day import format_day_recap
 from roxabi_sense.store import Event, Store
@@ -97,6 +97,7 @@ def test_annotate_from_in_call_session_overlap() -> None:
             label="Authentic x Silex",
             phase="in_call",
             call_id=None,
+            evidence="observed",
         )
     ]
     out = annotate_away_with_meetings(away, sessions)
@@ -219,23 +220,26 @@ def test_recap_meeting_vs_away_totals(tmp_path: Path) -> None:
             now=datetime(2026, 7, 31, 12, 0, 0, tzinfo=UTC),
         )
 
-    assert recap.meeting_total_s >= 30 * 60
-    assert recap.away_total_s >= 14 * 60
-    assert any(a.presence == "meeting" for a in recap.away_segments)
-    assert any(a.presence == "away" for a in recap.away_segments)
-    assert any(m.phase == "in_call" for m in recap.meeting_sessions)
+    assert recap.meeting_total_s == 0
+    assert recap.meeting_inferred_s == 300
+    assert recap.away_total_s >= 45 * 60
+    assert all(a.presence == "away" for a in recap.away_segments)
+    assert any(
+        m.phase == "in_call" and m.evidence == "inferred"
+        for m in recap.meeting_sessions
+    )
 
     text = format_day_recap(recap)
-    assert "meeting=" in text
+    assert "meeting_inferred=" in text
     assert "Idle gaps" in text
     assert "Meetings" in text
     assert "in_call" in text
     hour_labels = {app for _, apps in recap.hour_apps for app, _ in apps}
-    assert "meeting" in hour_labels
+    assert "meeting" not in hour_labels
 
 
 def test_meeting_total_contract(tmp_path: Path) -> None:
-    """AC3: meeting_total_s ≡ Σ in_call; tab_open excluded."""
+    """Title-derived call and tab time never count as observed meeting time."""
     db = tmp_path / "sense.db"
     with Store(db) as store:
         store.append(
@@ -288,17 +292,16 @@ def test_meeting_total_contract(tmp_path: Path) -> None:
         m.duration_s for m in recap.meeting_sessions if m.phase == "in_call"
     )
     tab_sum = sum(m.duration_s for m in recap.meeting_sessions if m.phase == "tab_open")
-    assert recap.meeting_total_s == in_call_sum
-    assert recap.meeting_tab_open_s == tab_sum
-    assert recap.meeting_total_s >= 50 * 60
-    assert recap.meeting_tab_open_s >= 5 * 60
-    assert recap.meeting_fidelity == "full"
+    assert recap.meeting_total_s == 0
+    assert recap.meeting_inferred_s == in_call_sum == 300
+    assert recap.meeting_tab_open_s == tab_sum == 300
+    assert recap.meeting_fidelity == "inferred"
     assert "tab_open" in format_day_recap(recap)
-    assert "fidelity=full" in format_day_recap(recap)
+    assert "fidelity=inferred" in format_day_recap(recap)
 
 
 def test_meeting_sessions_survive_multitask_and_split_tab_open() -> None:
-    """Desktop keeps Meet in background; focus elsewhere does not end in_call."""
+    """Sparse background hints produce separate evidence-bounded sessions."""
     events = [
         Event(
             id=1,
@@ -380,16 +383,18 @@ def test_meeting_sessions_survive_multitask_and_split_tab_open() -> None:
     assert len(sessions) >= 2
     in_call = [s for s in sessions if s.phase == "in_call"]
     tab = [s for s in sessions if s.phase == "tab_open"]
-    assert len(in_call) == 1
-    assert in_call[0].call_id == "qwb-fxnf-dje"
-    assert in_call[0].duration_s >= 80 * 60
-    assert in_call[0].duration_s <= 85 * 60
-    assert tab
-    assert tab[0].duration_s >= 8 * 60
+    assert len(in_call) == 2
+    assert all(s.call_id == "qwb-fxnf-dje" and s.evidence == "inferred" for s in in_call)
+    assert [(s.start, s.end) for s in in_call] == [
+        ("2026-08-03T09:01:44Z", "2026-08-03T09:08:40Z"),
+        ("2026-08-03T10:12:40Z", "2026-08-03T10:17:40Z"),
+    ]
+    assert len(tab) == 2
+    assert all(s.duration_s == 300 for s in tab)
 
 
 def test_desktop_without_meeting_ends_session() -> None:
-    """AC2: full inventory without meeting chrome hard-clears in_call."""
+    """A full inventory clears only if the inferred session has not expired."""
     events = [
         Event(
             id=1,
@@ -424,12 +429,13 @@ def test_desktop_without_meeting_ends_session() -> None:
     )
     assert len(sessions) == 1
     assert sessions[0].phase == "in_call"
-    assert sessions[0].end == "2026-08-03T09:10:00Z"
-    assert sessions[0].duration_s == 600.0
+    assert sessions[0].end == "2026-08-03T09:05:00Z"
+    assert sessions[0].duration_s == 300.0
+    assert sessions[0].evidence == "inferred"
 
 
 def test_partial_inventory_does_not_clear_in_call() -> None:
-    """active_only single-window desktop (wlr multitask) must not end the call."""
+    """Partial inventory cannot clear a hint, which still expires after five minutes."""
     events = [
         Event(
             id=1,
@@ -471,7 +477,9 @@ def test_partial_inventory_does_not_clear_in_call() -> None:
     assert len(sessions) == 1
     assert sessions[0].phase == "in_call"
     assert sessions[0].call_id == "qwb-fxnf-dje"
-    assert sessions[0].duration_s >= 50 * 60
+    assert sessions[0].duration_s == 360.0
+    assert sessions[0].end == "2026-08-03T09:06:00Z"
+    assert sessions[0].evidence == "inferred"
 
 
 def test_call_id_upgrade_does_not_split() -> None:
@@ -504,7 +512,7 @@ def test_call_id_upgrade_does_not_split() -> None:
     one = sessions_from_samples([(t0, h0), (t1, h1)], horizon=horizon)
     assert len(one) == 1
     assert one[0].call_id == "abc-defg-hij"
-    assert one[0].duration_s == 20 * 60
+    assert one[0].duration_s == 10 * 60
     two = sessions_from_samples([(t0, h1), (t2, h2)], horizon=horizon)
     assert len(two) == 2
     assert two[0].call_id == "abc-defg-hij"

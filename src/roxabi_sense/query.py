@@ -66,7 +66,7 @@ class SenseQuery:
 
     def active_now(self) -> dict[str, Any]:
         """Current presence + focus + agents + meeting annotation (tool: active_now)."""
-        from roxabi_sense.report.meeting_sessions import meeting_annotation_now
+        from roxabi_sense.report.meetings.evidence import meeting_annotation_for_store
 
         snap = load_status_snapshot(
             self.db_path,
@@ -89,25 +89,21 @@ class SenseQuery:
             if isinstance(raw, list):
                 sessions = [s for s in raw if isinstance(s, dict)]
         meeting: dict[str, Any] = {
-            "phase": None,
+            "phase": "unknown",
+            "inferred_phase": None,
+            "coverage": "unknown",
             "fidelity": "unknown",
             "fidelity_note": "no store",
         }
         if snap.db_exists and self.db_path.is_file():
             try:
                 with Store(self.db_path) as store:
-                    ev = store.events_for_day(
-                        None,
-                        kinds=("focus", "desktop_snapshot"),
-                        limit=20_000,
-                    )
-                    meeting = meeting_annotation_now(
-                        ev,
-                        focus_backend=store.get_meta("focus_backend"),
-                    )
+                    meeting = meeting_annotation_for_store(store)
             except Exception:  # noqa: BLE001 — never break active_now
                 meeting = {
-                    "phase": None,
+                    "phase": "unknown",
+                    "inferred_phase": None,
+                    "coverage": "unknown",
                     "fidelity": "unknown",
                     "fidelity_note": "meeting annotation unavailable",
                 }

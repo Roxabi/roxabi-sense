@@ -8,6 +8,14 @@ from typing import Any
 
 def summarize_event(kind: str, payload: dict[str, Any]) -> str:
     """One-line human summary for a raw store event (not day recap)."""
+    if kind == "meeting_sources":
+        sources = payload.get("sources")
+        count = len(sources) if isinstance(sources, list) else 0
+        return f"scope=chrome_google_meet sources={count}"
+    if kind == "meeting_snapshot":
+        tabs = payload.get("tabs")
+        count = len(tabs) if isinstance(tabs, list) else 0
+        return f"scope=chrome_google_meet complete={payload.get('complete')} tabs={count}"
     if kind == "agent_sessions_snapshot":
         sessions = payload.get("sessions") or []
         bits = []
@@ -85,6 +93,10 @@ _COARSE_DROP_KEYS = frozenset(
         "meeting_label",
         "label",
         "call_id",
+        "source_id",
+        "epoch",
+        "tab_id",
+        "sources",
         "pid",
         "agent_pid",
         "pane_title",

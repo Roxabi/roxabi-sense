@@ -16,8 +16,10 @@ from roxabi_sense.report import (
     StatusSnapshot,
     format_presence_lines,
     load_status_snapshot,
+    summarize_event,
 )
 from roxabi_sense.store import Store
+from roxabi_sense.surfaces import meeting_browser
 from roxabi_sense.surfaces.cmds import cmd_care_brief, cmd_day, cmd_recap
 
 
@@ -84,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     p_tr = sub.add_parser("atspi-trace", help="AT-SPI empirical JSONL trace status")
     p_tr.add_argument("--path", type=Path, default=None, help="trace jsonl path")
     p_tr.add_argument("--json", action="store_true", help="JSON summary")
+    meeting_browser.add_arguments(sub)
 
     args = parser.parse_args(argv)
     if not args.cmd:
@@ -95,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"sense: {exc}", file=sys.stderr)
         return 2
+    if args.cmd == "meeting-browser":
+        return meeting_browser.dispatch(args, cfg)
 
     if args.cmd == "daemon":
         return run_daemon(cfg)
@@ -209,37 +214,31 @@ def _print_status(snap: StatusSnapshot, *, as_json: bool) -> int:
         if meeting.get("provider"):
             print(f"provider: {meeting['provider']}  since: {meeting.get('start') or '—'}")
     else:
-        print(f"phase: none  fidelity={fid}")
+        print(f"phase: {meeting.get('state') or 'unknown'}  fidelity={fid}")
     note = meeting.get("fidelity_note")
     if note:
         print(f"note: {note}")
+    if meeting.get("inferred_phase"):
+        print(f"inferred_phase: {meeting['inferred_phase']} (not confirmed)")
     last = snap.last_event
     if last:
-        payload_preview = json.dumps(last.payload, ensure_ascii=False)[:120]
+        payload_preview = summarize_event(last.kind, last.payload)
         print(f"last_event: {last.ts} {last.kind} {payload_preview}")
     for kind, ev in snap.latest_by_kind.items():
-        preview = json.dumps(ev.payload, ensure_ascii=False)[:100]
+        preview = summarize_event(kind, ev.payload)
         print(f"  {kind}: {ev.ts} {preview}")
     return 0
 
 
 def _status_meeting_annotation(snap: StatusSnapshot) -> dict:
     """Live meeting annotation via report compiler (surfaces format only)."""
-    from roxabi_sense.report.meeting_sessions import meeting_annotation_now
+    from roxabi_sense.report.meetings.evidence import meeting_annotation_for_store
 
     if not snap.db_exists or not snap.db_path.is_file():
         return {"phase": None, "fidelity": "unknown", "fidelity_note": "no store"}
     try:
         with Store(snap.db_path) as store:
-            ev = store.events_for_day(
-                None,
-                kinds=("focus", "desktop_snapshot"),
-                limit=20_000,
-            )
-            return meeting_annotation_now(
-                ev,
-                focus_backend=store.get_meta("focus_backend"),
-            )
+            return meeting_annotation_for_store(store)
     except Exception:  # noqa: BLE001
         return {
             "phase": None,
