@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {webcrypto} from 'node:crypto';
+import {runInNewContext} from 'node:vm';
 
 globalThis.crypto ??= webcrypto;
 const source = await readFile(new URL('../../src/roxabi_sense/collectors/meeting_browser/extension/worker.js', import.meta.url), 'utf8');
@@ -47,6 +48,57 @@ function fixture() {
 
 const sender = {id: 'extension', tab: {id: 4}, frameId: 0, documentId: 'doc', url: 'https://meet.google.com/abc'};
 const observed = (nonce) => ({kind: 'meeting-observation', nonce, tab_id: 'e69d16b8-c48a-48f2-ad17-5c6117958034', state: 'joined', basis: 'leave_control'});
+
+test('real content confirmation gates home observations sent by the worker', async () => {
+  const content = await readFile(new URL(
+    '../../src/roxabi_sense/collectors/meeting_browser/extension/content.js', import.meta.url), 'utf8');
+  for (const confirmAvailable of [true, false]) {
+    const f = fixture();
+    f.setTabs([{id: 4}]);
+    let contentHandler;
+    const controls = [
+      {tag: 'button', label: 'Nouvelle réunion'},
+      {tag: 'input', label: 'Saisissez un code ou un alias'},
+    ].map((item) => ({
+      ...item, parentElement: null, closest: () => null, matches: () => false,
+      getBoundingClientRect: () => ({width: 10, height: 10}),
+    }));
+    const chrome = {runtime: {
+      id: 'extension',
+      onMessage: {addListener(fn) { contentHandler = fn; }},
+      sendMessage(message) { f.respond(message, sender); return Promise.resolve(); },
+    }};
+    runInNewContext(content, {
+      chrome, crypto: webcrypto,
+      document: {querySelectorAll(selector) {
+        if (selector === '[role="alert"], [role="status"]') return [];
+        const match = /^(button|input|\[role="button"\]|\[role="textbox"\])\[aria-label="([^"]+)"\]$/.exec(selector);
+        if (!match) throw new Error(`Unexpected selector: ${selector}`);
+        return controls.filter((item) => item.tag === match[1] && item.label === match[2]);
+      }},
+      getComputedStyle: () => ({display: 'block', visibility: 'visible', opacity: '1'}),
+    });
+    f.setSample((_tab, message) => {
+      contentHandler(message, {id: 'extension'});
+      return Promise.resolve();
+    });
+    f.setConfirm((_tab, message) => new Promise((resolve) => {
+      if (confirmAvailable) contentHandler(message, {id: 'extension'}, resolve);
+      else resolve(undefined);
+    }));
+    const collector = createCollector(f.api, f.timers);
+    collector.start();
+    await tick();
+    if (!confirmAvailable) {
+      f.timers.run(2000);
+      await tick();
+    }
+    assert.deepEqual(f.frames[0].tabs.map(({state, basis}) => ({state, basis})),
+      [confirmAvailable ? {state: 'not_joined', basis: 'home'} :
+        {state: 'unknown', basis: 'no_response'}]);
+    collector.stop();
+  }
+});
 
 test('each complete enumeration samples anew and never replays a joined result', async () => {
   const f = fixture();
