@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from roxabi_sense.report.away import AwaySegment
+from roxabi_sense.report.dwell.coverage import coverage_cuts, identity_cuts
 from roxabi_sense.store import Event
 from roxabi_sense.util.time import parse_ts, to_z
 from roxabi_sense.util.titles import normalize_title
@@ -43,6 +44,7 @@ class FocusSegment:
     session_id: str | None = None  # agent session when linked
     agent_pid: int | None = None  # grok/claude process under the pane
     agent_match: str | None = None  # agent_link match tier
+    window_id: str | None = None
 
 
 def norm_app(raw: str | None) -> str:
@@ -69,6 +71,8 @@ def attention_key(seg: FocusSegment) -> tuple[str, ...]:
         return (app, "session", seg.session_id)
     if seg.agent_pid is not None:
         return (app, "agent_pid", str(seg.agent_pid))
+    if seg.window_id:
+        return (app, "window", seg.window_id)
     if seg.cwd and app.lower() in _TERMINAL_APPS:
         return (app, "cwd", seg.cwd)
     if seg.pid is not None and app.lower() not in _SHARED_PID_APPS:
@@ -132,7 +136,7 @@ def attention_segments(fine: list[FocusSegment]) -> list[FocusSegment]:
 
     for seg in fine[1:]:
         k = attention_key(seg)
-        if k == run_key:
+        if k == run_key and seg.start == end:
             end = seg.end
             dur += seg.duration_s
             title_dwell[seg.title] = title_dwell.get(seg.title, 0.0) + seg.duration_s
@@ -167,6 +171,7 @@ def focus_segments(
     away: list[AwaySegment],
     *,
     horizon: datetime,
+    coverage_events: list[Event] | None = None,
 ) -> list[FocusSegment]:
     """Attribute focus dwell (fine grain: app+title), cutting out away gaps."""
     if not focus_events:
@@ -183,6 +188,8 @@ def focus_segments(
             str | None,
             str | None,
             int | None,
+            str | None,
+            str | None,
         ]
     ] = []
     for e in focus_events:
@@ -201,8 +208,13 @@ def focus_segments(
         )
         agent_pid = _as_int(ag.get("pid")) if isinstance(ag, dict) else None
         win_pid = _as_int(e.payload.get("pid"))
+        window_id = str(e.payload["window_id"]) if e.payload.get("window_id") else None
+        source = str(e.payload["source"]) if e.payload.get("source") else None
         t = parse_ts(e.ts)
-        if collapsed and collapsed[-1][1] == app and collapsed[-1][2] == title:
+        if (
+            collapsed and collapsed[-1][1] == app and collapsed[-1][2] == title
+            and collapsed[-1][9] == window_id and collapsed[-1][10] == source
+        ):
             prev = collapsed[-1]
             collapsed[-1] = (
                 prev[0],
@@ -214,20 +226,25 @@ def focus_segments(
                 sid or prev[6],
                 match_s or prev[7],
                 agent_pid if agent_pid is not None else prev[8],
+                window_id,
+                source,
             )
             continue
         collapsed.append(
-            (t, app, title, cwd_s, agent_s, win_pid, sid, match_s, agent_pid)
+            (t, app, title, cwd_s, agent_s, win_pid, sid, match_s, agent_pid, window_id, source)
         )
 
     away_ranges = [(parse_ts(a.start), parse_ts(a.end)) for a in away]
+    coverage = sorted(coverage_events or [], key=lambda e: (e.ts, e.id))
+    away_ranges.extend(coverage_cuts(coverage, focus_events, horizon))
     segs: list[FocusSegment] = []
     for i, row in enumerate(collapsed):
-        t0, app, title, cwd, agent, win_pid, sid, match_s, agent_pid = row
+        t0, app, title, cwd, agent, win_pid, sid, match_s, agent_pid, window_id, source = row
         t1 = collapsed[i + 1][0] if i + 1 < len(collapsed) else horizon
         if t1 < t0:
             t1 = t0
-        for a0, a1 in _subtract_ranges(t0, t1, away_ranges):
+        mismatches = identity_cuts(coverage, horizon, source, window_id)
+        for a0, a1 in _subtract_ranges(t0, t1, away_ranges + mismatches):
             dur = (a1 - a0).total_seconds()
             if dur < MIN_DWELL_S:
                 continue
@@ -244,6 +261,7 @@ def focus_segments(
                     session_id=sid,
                     agent_pid=agent_pid,
                     agent_match=match_s,
+                    window_id=window_id,
                 )
             )
     return segs

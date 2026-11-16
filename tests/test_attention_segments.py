@@ -74,7 +74,7 @@ def test_title_thrash_same_session_merges() -> None:
         _seg(
             title=f"title-{i}",
             start=f"2026-07-30T10:00:{i:02d}Z",
-            end=f"2026-07-30T10:00:{i + 1:02d}Z",
+            end=f"2026-07-30T10:00:{i + 10:02d}Z",
             duration_s=10,
             session_id="same",
             agent_pid=100,
@@ -89,6 +89,22 @@ def test_title_thrash_same_session_merges() -> None:
     assert switch_count(fine) == 0  # same attention_key throughout
     assert switch_count(fine, key=lambda s: (s.app, s.title)) == 4
     assert switch_count(fine, key=lambda s: s.app) == 0
+
+
+def test_same_session_separated_by_gap_does_not_merge() -> None:
+    fine = [
+        _seg(
+            title="before", start="2026-07-30T10:00:00Z",
+            end="2026-07-30T10:00:10Z", duration_s=10, session_id="same",
+        ),
+        _seg(
+            title="after", start="2026-07-30T10:00:20Z",
+            end="2026-07-30T10:00:30Z", duration_s=10, session_id="same",
+        ),
+    ]
+    attn = attention_segments(fine)
+    assert len(attn) == 2
+    assert [segment.duration_s for segment in attn] == [10, 10]
 
 
 def test_short_ghostty_hops_are_kept() -> None:

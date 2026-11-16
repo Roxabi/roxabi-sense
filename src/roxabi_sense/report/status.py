@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from roxabi_sense.report.presence import (
     presence_from_store,
 )
 from roxabi_sense.store import STATUS_KINDS, Event, Store
+from roxabi_sense.util.time import parse_ts
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,39 @@ class StatusSnapshot:
             for kind, ev in self.latest_by_kind.items()
         }
         return body
+
+
+def current_focus(snapshot: StatusSnapshot) -> tuple[Event | None, str]:
+    """Return current focus only when its matching observation is still healthy."""
+    focus = snapshot.latest_by_kind.get("focus")
+    coverage = snapshot.latest_by_kind.get("focus_coverage")
+    if coverage is None:
+        return focus, "legacy_unverified"
+    if focus is None or not snapshot.db_exists or not snapshot.db_path.is_file():
+        return None, "unknown"
+    try:
+        with Store(snapshot.db_path) as store:
+            raw = store.get_meta("focus_observation")
+        observation = json.loads(raw) if raw else {}
+        if (
+            isinstance(observation, dict)
+            and coverage.payload.get("state") == "observed"
+            and observation.get("healthy") is True
+            and observation.get("coverage_id") == coverage.id
+            and observation.get("source") == coverage.payload.get("source")
+            and observation.get("window_id") == coverage.payload.get("window_id")
+            and coverage.payload.get("source") == focus.payload.get("source")
+            and coverage.payload.get("window_id") == focus.payload.get("window_id")
+            and focus.ts >= coverage.ts
+            and isinstance(observation.get("last_observed_at"), str)
+            and observation["last_observed_at"] >= coverage.ts
+            and parse_ts(observation["last_observed_at"]) <= datetime.now(UTC)
+            and parse_ts(observation["fresh_until"]) > datetime.now(UTC)
+        ):
+            return focus, "observed"
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    return None, "unknown"
 
 
 def status_snapshot(

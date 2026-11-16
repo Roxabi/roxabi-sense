@@ -52,6 +52,11 @@ def summarize_event(kind: str, payload: dict[str, Any]) -> str:
         return f"players={len(players)}"
     if kind == "agent_session":
         return f"{payload.get('agent')} {payload.get('cwd') or payload.get('state')}"
+    if kind == "focus_coverage":
+        return (
+            f"{payload.get('state')} source={payload.get('source')} "
+            f"reason={payload.get('reason')}"
+        )
     if kind == "focus":
         agent = payload.get("agent") or {}
         agent_bit = ""

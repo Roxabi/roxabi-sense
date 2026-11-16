@@ -139,6 +139,7 @@ def format_day_recap(recap: DayRecap, *, max_titles: int = 10, max_hours: int = 
     if recap.kind_counts:
         kinds = "  ".join(f"{k}={v}" for k, v in list(recap.kind_counts.items())[:8])
         lines.append(f"kinds: {kinds}")
+    lines.append(f"focus coverage: {recap.focus_coverage_quality}")
     lines.extend(
         format_meeting_sessions(
             recap.meeting_sessions,

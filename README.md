@@ -258,16 +258,26 @@ No Podman required on the laptop for V1. M₂ may use the same user unit. M₁ h
 
 ### Focus probes (multi-Linux)
 
-Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. Fact field `source` is the **backend id** (`atspi` | `x11` | `wlr` | `kde` | `noop`).
+Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. The
+`source` field identifies the backend (`cosmic` | `atspi` | `x11` | `wlr` | `kde` | `noop`).
 
 | Session | Candidate order (first healthy wins) |
 |---------|--------------------------------------|
-| Wayland GNOME / Cosmic / unknown | `atspi` → `x11` → `noop` |
+| Wayland Cosmic / unknown | `cosmic` → `atspi` → `x11` → `noop` |
+| Wayland GNOME | `atspi` → `x11` → `noop` |
 | Wayland wlroots (Hyprland / Sway) | `wlr` → `atspi` → `x11` → `noop` |
 | Wayland KDE | `atspi` → `kde` (stub) → `x11` → `noop` |
 | Pure X11 | `x11` → `atspi` → `noop` |
 
-- **AT-SPI** — long-lived agent (system Python + `gi`); best on GNOME/Cosmic when a11y works.
+- **COSMIC** — read-only native Wayland toplevel metadata when both COSMIC
+  toplevel-info and ext-foreign-toplevel-list are advertised. Capability
+  detection does not require `XDG_CURRENT_DESKTOP`; the daemon needs
+  `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in its graphical-session environment.
+  No screenshots, input hooks, or window-control requests are used.
+  `focus_coverage` records transitions; health is stored in `focus_observation`
+  metadata, not heartbeat events. Unknown or stale coverage is not counted as
+  focus dwell. Historical focus without coverage is `legacy_unverified`.
+- **AT-SPI** — long-lived fallback agent (system Python + `gi`) when accessibility works.
 - **X11** — `xprop` / active window (XWayland fallback). Package: **`x11-utils`**.
 - **wlr** — `hyprctl activewindow -j` or `swaymsg -t get_tree` when compositor env is set.
 - **kde** — stub for now (`probe()` false until KWin D-Bus path lands).

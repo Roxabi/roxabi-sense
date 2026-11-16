@@ -63,6 +63,31 @@ def test_window_from_src_logic() -> None:
     assert window_from_src({"app": "unknown", "name": "", "pid": None}) is None
 
 
+def test_inactive_name_event_never_promotes_background_window() -> None:
+    import ast
+    from types import SimpleNamespace
+
+    tree = ast.parse(_WORKER.read_text(encoding="utf-8"))
+    node = next(
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "on_event"
+    )
+    module = ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[]))
+    armed: list[object] = []
+    ns: dict[str, Any] = {
+        "_TRACE": False,
+        "_product_focus_event": lambda event: True,
+        "event_reason": lambda event: "name",
+        "describe_src": lambda event: {
+            "app": "background", "frame_name": "tab", "frame_states": {"active": False}
+        },
+        "window_from_src": _load_window_from_src(),
+        "arm_win": lambda win, reason: armed.append(win),
+    }
+    exec(compile(module, str(_WORKER), "exec"), ns)  # noqa: S102
+    ns["on_event"](SimpleNamespace(type="object:property-change:accessible-name"))
+    assert armed == []
+
+
 def test_agent_callback_on_probe_result(monkeypatch) -> None:
     events: list[dict[str, Any]] = []
 
