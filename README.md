@@ -276,7 +276,10 @@ Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. Th
   No screenshots, input hooks, or window-control requests are used.
   `focus_coverage` records transitions; health is stored in `focus_observation`
   metadata, not heartbeat events. Unknown or stale coverage is not counted as
-  focus dwell. Historical focus without coverage is `legacy_unverified`.
+  focus dwell. Historical focus without coverage, including a later fallback
+  source marked by `focus_legacy`, is `legacy_unverified`, not certified native
+  coverage. A per-database nonblocking ownership lock prevents `collect --once`
+  from replacing a running daemon's focus observation; other collectors still run.
 - **AT-SPI** — long-lived fallback agent (system Python + `gi`) when accessibility works.
 - **X11** — `xprop` / active window (XWayland fallback). Package: **`x11-utils`**.
 - **wlr** — `hyprctl activewindow -j` or `swaymsg -t get_tree` when compositor env is set.

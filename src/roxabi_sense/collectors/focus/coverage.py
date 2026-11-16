@@ -31,6 +31,9 @@ class CoverageWriter:
         latest = store.last_by_kind("focus_coverage")
         if latest is None or latest.payload.get("state") != "observed":
             return 0
+        legacy = store.last_by_kind("focus_legacy")
+        if legacy is not None and legacy.id > latest.id:
+            return 0
         matches = (
             meta.get("coverage_id") == latest.id
             and meta.get("source") == latest.payload.get("source")
@@ -44,6 +47,46 @@ class CoverageWriter:
         )
         store.set_meta("focus_observation", json.dumps({"healthy": False, "reason": "restart"}))
         return 1
+
+    def legacy(self, store: Store, source: str, windows: list[FocusWindow]) -> int:
+        """Mark a post-native source as legacy, without certifying its history."""
+        if sum(w.active for w in windows) != 1:
+            return 0
+        latest = store.last_by_kind("focus_coverage")
+        if latest is None:
+            return 0
+        legacy = store.last_by_kind("focus_legacy")
+        if legacy is not None and legacy.id > latest.id and legacy.payload.get("source") == source:
+            return 0
+        wrote = 0
+        if latest.payload.get("state") == "observed" and (
+            legacy is None or legacy.id < latest.id
+        ):
+            try:
+                observation = json.loads(store.get_meta("focus_observation") or "{}")
+                end = (
+                    observation.get("last_observed_at")
+                    if isinstance(observation, dict)
+                    and observation.get("coverage_id") == latest.id
+                    and observation.get("source") == latest.payload.get("source")
+                    and observation.get("window_id") == latest.payload.get("window_id")
+                    else None
+                )
+            except (TypeError, ValueError):
+                end = None
+            store.append(
+                "focus_coverage",
+                {"state": "unknown", "source": latest.payload.get("source"),
+                 "reason": "source_changed"},
+                ts=max(end, latest.ts) if isinstance(end, str) else latest.ts,
+            )
+            wrote += 1
+        store.append("focus_legacy", {"source": source, "reason": "source_changed"})
+        store.set_meta("focus_observation", json.dumps({
+            "healthy": False, "source": source, "reason": "legacy_unverified",
+        }))
+        self.current = None
+        return wrote + 1
 
     def update(
         self, store: Store, probe: CosmicFocusProbe, windows: list[FocusWindow]

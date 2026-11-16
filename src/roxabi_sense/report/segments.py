@@ -24,6 +24,7 @@ from roxabi_sense.util.titles import normalize_title
 MIN_DWELL_S = 3.0  # ignore micro-focus flickers (fine title segments)
 _APP_ALIASES: dict[str, str] = {
     "unnamed": "ghostty",
+    "com.mitchellh.ghostty": "ghostty",
     "xdg-desktop-portal-gtk": "dialog",
 }
 # Multi-window single process: window pid does not identify a surface.
@@ -90,17 +91,16 @@ def switch_count(
         return 0
     key_fn = key if key is not None else attention_key
     n = 0
-    last = key_fn(segments[0])
-    for s in segments[1:]:
-        k = key_fn(s)
-        if k != last:
+    previous = segments[0]
+    for current in segments[1:]:
+        if previous.end == current.start and key_fn(current) != key_fn(previous):
             n += 1
-            last = k
+        previous = current
     return n
 
 
 def is_terminal_app(app: str) -> bool:
-    return (app or "").lower() in _TERMINAL_APPS or app == "ghostty"
+    return norm_app(app).lower() in _TERMINAL_APPS
 
 
 def attention_segments(fine: list[FocusSegment]) -> list[FocusSegment]:

@@ -159,3 +159,29 @@ def test_recover_to_atspi(tmp_path: Path) -> None:
     assert store.get_meta("focus_backend") == "atspi"
     assert store.get_meta("focus_status") == "available"
     store.close()
+
+
+def test_secondary_atspi_must_be_healthy_before_x11_fallback(tmp_path: Path) -> None:
+    class Probe:
+        def __init__(self, source: str, healthy: bool) -> None:
+            self.source = source
+            self.healthy = healthy
+
+        def probe(self) -> bool:
+            return self.healthy
+
+        def get_active(self) -> list:
+            return []
+
+        def get_desktop(self) -> list:
+            return []
+
+    collector = FocusCollector(sessions_loader=lambda: [])
+    session = SessionInfo(session_type="wayland", desktop_family="unknown", desktop_raw="")
+    runtime = FocusRuntime(collector, session=session, env={})
+    runtime._probes["cosmic"] = Probe("cosmic", False)
+    runtime._probes["atspi"] = Probe("atspi", False)
+    runtime._probes["x11"] = Probe("x11", True)
+    with Store(tmp_path / "s.db") as store:
+        assert runtime.select_initial(store).source == "x11"
+        assert store.get_meta("focus_backend") == "x11"

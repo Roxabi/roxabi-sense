@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from roxabi_sense.collectors.focus.collector import FocusCollector
+from roxabi_sense.collectors.focus.ownership import acquire_focus_owner, release_focus_owner
+from roxabi_sense.collectors.focus.probes.cosmic import CosmicFocusProbe
+from roxabi_sense.collectors.focus.protocol import FocusWindow
 from roxabi_sense.config import SenseConfig
 from roxabi_sense.daemon import build_collectors, build_poll_collectors, collect_once, tick_all
+from roxabi_sense.query import SenseQuery
 from roxabi_sense.store import Store
 
 
@@ -80,3 +85,45 @@ def test_poll_collectors_exclude_focus() -> None:
     assert all(c.name != "focus_atspi" for c in poll)
     all_c = build_collectors(cfg)
     assert any(c.name == "focus_atspi" for c in all_c)
+
+
+def test_once_does_not_steal_live_focus_writer(tmp_path: Path, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    db = tmp_path / "s.db"
+    owner = acquire_focus_owner(db)
+    assert owner is not None
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.resolve_app_name", lambda app, pid: app
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.find_agent_link", lambda *a, **kw: None
+    )
+    monkeypatch.setattr("roxabi_sense.collectors.focus.collector.children_map", lambda: {})
+    monkeypatch.setattr("roxabi_sense.collectors.focus.collector.list_mux_agent_panes", lambda: [])
+    monkeypatch.setattr(
+        "roxabi_sense.daemon.build_poll_collectors", lambda cfg, logind_idle: [_Ok()]
+    )
+    probe = CosmicFocusProbe(env={})
+    probe.reason = "observed"
+    probe.observed_at = datetime.now(UTC)
+    collector = FocusCollector(focus_probe=probe, sessions_loader=lambda: [])
+    window = FocusWindow(app="editor", title="", active=True, window_id="epoch:one")
+    cfg = SenseConfig(db_path=db, focus=True, idle=False)
+    try:
+        with Store(db) as store:
+            collector.apply(store, [window], mode="focus")
+            first = store.last_by_kind("focus_coverage")
+            before = store.get_meta("focus_observation")
+            assert first is not None
+            assert collect_once(cfg) == 1
+            assert store.last_by_kind("focus_coverage") == first
+            assert store.get_meta("focus_observation") == before
+            probe.observed_at = datetime.now(UTC)
+            collector.apply(store, [window], mode="focus")
+            assert store.last_by_kind("focus_coverage") == first
+        result = SenseQuery(db_path=db, offline_threshold_s=120, idle_threshold_s=300).active_now()
+        assert result["focus_quality"] == "observed"
+        assert result["focus"]["app"] == "editor"
+    finally:
+        release_focus_owner(owner)

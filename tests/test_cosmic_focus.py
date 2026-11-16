@@ -171,3 +171,60 @@ def test_active_now_requires_matching_live_observation(tmp_path: Path) -> None:
             "state": "unknown", "source": "cosmic", "reason": "connection_failure",
         })
     assert query.active_now()["focus"] is None
+
+
+def test_restart_and_same_window_recovery_force_a_new_focus_event(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from roxabi_sense.collectors.focus.collector import FocusCollector
+
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.resolve_app_name", lambda app, pid: app
+    )
+    monkeypatch.setattr(
+        "roxabi_sense.collectors.focus.collector.find_agent_link", lambda *a, **kw: None
+    )
+    monkeypatch.setattr("roxabi_sense.collectors.focus.collector.children_map", lambda: {})
+    monkeypatch.setattr("roxabi_sense.collectors.focus.collector.list_mux_agent_panes", lambda: [])
+    probe = CosmicFocusProbe(env={})
+    probe.reason = "observed"
+    probe.observed_at = datetime.now(UTC)
+    window = FocusWindow(app="editor", title="", active=True, window_id="epoch:one")
+    with Store(tmp_path / "coverage.db") as store:
+        first = FocusCollector(focus_probe=probe, sessions_loader=lambda: [])
+        first.apply(store, [window], mode="focus")
+        original = store.last_by_kind("focus")
+        assert original is not None
+        restarted = FocusCollector(focus_probe=probe, sessions_loader=lambda: [])
+        restarted.apply(store, [window], mode="focus")
+        recovered = store.last_by_kind("focus")
+        assert recovered is not None and recovered.id > original.id
+        events = store.events_for_day(kinds=("focus_coverage",), limit=100)
+        assert [event.payload["state"] for event in events] == [
+            "observed", "unknown", "observed",
+        ]
+        assert events[1].payload["reason"] == "restart"
+
+
+def test_fallback_writer_closes_native_at_last_observation(tmp_path: Path) -> None:
+    from roxabi_sense.util.time import to_z
+
+    now = datetime.now(UTC)
+    with Store(tmp_path / "coverage.db") as store:
+        old_id = store.append("focus_coverage", {
+            "state": "observed", "source": "cosmic", "window_id": "epoch:one",
+        }, ts=to_z(now - timedelta(minutes=2)))
+        store.set_meta("focus_observation", json.dumps({
+            "coverage_id": old_id, "source": "cosmic", "window_id": "epoch:one",
+            "last_observed_at": to_z(now - timedelta(minutes=1)), "healthy": True,
+        }))
+        writer = CoverageWriter()
+        writer.initialized = True
+        window = FocusWindow(app="browser", title="", active=True)
+        assert writer.legacy(store, "x11", [window]) == 2
+        boundary = store.last_by_kind("focus_coverage")
+        assert boundary is not None and boundary.payload["state"] == "unknown"
+        assert boundary.ts == to_z(now - timedelta(minutes=1))
+        legacy = store.last_by_kind("focus_legacy")
+        assert legacy is not None and legacy.payload["source"] == "x11"
+        assert writer.legacy(store, "x11", [window]) == 0

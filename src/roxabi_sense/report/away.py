@@ -46,7 +46,13 @@ def away_segments(
         window_start=window_start,
         prior_idle=prior_idle,
     )
-    if protocol:
+    if (
+        prior_idle is not None and isinstance(prior_idle.payload.get("idle"), bool)
+    ) or any(
+        e.kind == "focus_coverage"
+        or (e.kind == "idle" and isinstance(e.payload.get("idle"), bool))
+        for e in events
+    ):
         return protocol
     return _degraded_away(events, horizon=horizon, gap_s=gap_s, window_start=window_start)
 

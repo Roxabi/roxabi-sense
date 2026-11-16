@@ -9,6 +9,7 @@ import json
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
+from itertools import pairwise
 from typing import Any
 
 from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
@@ -32,6 +33,7 @@ from roxabi_sense.report.segments import (
     horizon_dt,
     switch_count,
 )
+from roxabi_sense.report.status import current_focus, status_snapshot
 from roxabi_sense.report.top_apps import AppDwell, session_shape, top_apps
 from roxabi_sense.store import Event, Store
 from roxabi_sense.util.time import parse_ts
@@ -80,6 +82,7 @@ class DayRecap:
     hour_apps: list[tuple[str, list[tuple[str, float]]]]
     session_shape: str | None
     focus_coverage_quality: str = "legacy_unverified"
+    current_focus_quality: str = "legacy_unverified"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -102,10 +105,21 @@ def compile_day_recap(
     horizon = horizon_dt(end, now)
     # Carry-in prior-day idle so overnight leave-open does not soak last app (ADR-002).
     prior_idle = store.last_by_kind_before("idle", start)
+    prior_coverage = store.last_by_kind_before("focus_coverage", start)
+    prior_legacy = store.last_by_kind_before("focus_legacy", start)
+    if prior_legacy is not None and (
+        prior_coverage is None or (prior_legacy.ts, prior_legacy.id) > (
+            prior_coverage.ts, prior_coverage.id
+        )
+    ):
+        prior_coverage = replace(
+            prior_legacy, kind="focus_coverage",
+            payload={**prior_legacy.payload, "state": "legacy_unverified"},
+        )
     sessions = meeting_sessions(events, horizon=horizon)
     away = annotate_away_with_meetings(
         away_segments(
-            events,
+            [prior_coverage, *events] if prior_coverage is not None else events,
             horizon=horizon,
             gap_s=IDLE_GAP_S,
             window_start=parse_ts(start),
@@ -114,8 +128,12 @@ def compile_day_recap(
         sessions,
     )
     focus_ev = [e for e in events if e.kind == "focus"]
-    coverage = [e for e in events if e.kind == "focus_coverage"]
-    prior_coverage = store.last_by_kind_before("focus_coverage", start)
+    coverage = [
+        e if e.kind == "focus_coverage" else replace(
+            e, kind="focus_coverage", payload={**e.payload, "state": "legacy_unverified"}
+        )
+        for e in events if e.kind in {"focus_coverage", "focus_legacy"}
+    ]
     if prior_coverage is not None:
         coverage.insert(0, prior_coverage)
         prior_focus = store.last_by_kind_before("focus", start)
@@ -175,9 +193,9 @@ def compile_day_recap(
         events,
         focus_backend=store.get_meta("focus_backend"),
     )
-    title_sw = max(0, len(segments) - 1) if segments else 0
+    title_sw = sum(a.end == b.start for a, b in pairwise(segments))
     app_sw = switch_count(segments, key=lambda s: s.app)
-    ctx_sw = max(0, len(attn) - 1) if attn else 0
+    ctx_sw = switch_count(attn)
 
     return DayRecap(
         day=day_label,
@@ -215,9 +233,12 @@ def compile_day_recap(
         session_shape=session_shape(attn, away),
         focus_coverage_quality=(
             "bounded"
-            if raw_observation and coverage and all(e.ts >= coverage[0].ts for e in focus_ev)
+            if raw_observation and coverage
+            and all(e.payload.get("state") != "legacy_unverified" for e in coverage)
+            and all(e.ts >= coverage[0].ts for e in focus_ev)
             else "legacy_unverified"
         ),
+        current_focus_quality=current_focus(status_snapshot(store), now=horizon)[1],
     )
 
 

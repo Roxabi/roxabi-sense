@@ -41,6 +41,7 @@ STATUS_KINDS: tuple[str, ...] = (
     "desktop_snapshot",
     "focus",
     "focus_coverage",
+    "focus_legacy",
 )
 
 TIMELINE_KINDS: tuple[str, ...] = (
@@ -53,6 +54,7 @@ TIMELINE_KINDS: tuple[str, ...] = (
     "tmux_snapshot",
     "focus",
     "focus_coverage",
+    "focus_legacy",
     "desktop_snapshot",
 )
 

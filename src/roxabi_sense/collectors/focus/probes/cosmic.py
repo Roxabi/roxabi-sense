@@ -49,6 +49,7 @@ class CosmicFocusProbe:
                 return []
         wire = self.wire
         assert wire is not None
+        wire.deadline = time.monotonic() + 0.05
         try:
             if (
                 self.observed_at is not None
@@ -68,7 +69,7 @@ class CosmicFocusProbe:
                 self._ping_at = now
             if now - wire.ack_at > _HEALTH_TIMEOUT_S:
                 raise TimeoutError("Wayland health expired")
-            if not wire.ready or wire.dirty or wire.ack_at < wire.commit_at:
+            if not wire.ready or wire.dirty:
                 self.reason = "pending_batch"
                 return []
             committed = [h.get("committed", {}) for h in wire.handles.values()]

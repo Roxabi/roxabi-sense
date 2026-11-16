@@ -56,10 +56,22 @@ class StatusSnapshot:
         return body
 
 
-def current_focus(snapshot: StatusSnapshot) -> tuple[Event | None, str]:
+def current_focus(
+    snapshot: StatusSnapshot, *, now: datetime | None = None
+) -> tuple[Event | None, str]:
     """Return current focus only when its matching observation is still healthy."""
+    now = now or datetime.now(UTC)
     focus = snapshot.latest_by_kind.get("focus")
     coverage = snapshot.latest_by_kind.get("focus_coverage")
+    legacy = snapshot.latest_by_kind.get("focus_legacy")
+    if (
+        legacy is not None
+        and (coverage is None or legacy.id > coverage.id)
+        and focus is not None
+        and focus.ts >= legacy.ts
+        and focus.payload.get("source") == legacy.payload.get("source")
+    ):
+        return focus, "legacy_unverified"
     if coverage is None:
         return focus, "legacy_unverified"
     if focus is None or not snapshot.db_exists or not snapshot.db_path.is_file():
@@ -78,10 +90,11 @@ def current_focus(snapshot: StatusSnapshot) -> tuple[Event | None, str]:
             and coverage.payload.get("source") == focus.payload.get("source")
             and coverage.payload.get("window_id") == focus.payload.get("window_id")
             and focus.ts >= coverage.ts
+            and parse_ts(focus.ts) <= now
             and isinstance(observation.get("last_observed_at"), str)
             and observation["last_observed_at"] >= coverage.ts
-            and parse_ts(observation["last_observed_at"]) <= datetime.now(UTC)
-            and parse_ts(observation["fresh_until"]) > datetime.now(UTC)
+            and parse_ts(observation["last_observed_at"]) <= now
+            and parse_ts(observation["fresh_until"]) > now
         ):
             return focus, "observed"
     except (OSError, ValueError, TypeError, KeyError):

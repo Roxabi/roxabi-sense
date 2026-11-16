@@ -59,7 +59,11 @@ def compile_care_brief(
             "minutes": round(float(getattr(best, "duration_s", 0.0) or 0.0) / 60.0, 2),
         }
     pres_state = str(presence.get("state") or "")
-    current = _current_stretch(attn, now=n, presence_state=pres_state)
+    current = (
+        _current_stretch(attn, now=n, presence_state=pres_state)
+        if getattr(recap, "current_focus_quality", "legacy_unverified") != "unknown"
+        else None
+    )
     focused_repo = getattr(recap, "focused_repo_now", None)
     if current is not None and focused_repo and is_terminal_app(str(current.get("app"))):
         current = {**current, "repo": focused_repo}

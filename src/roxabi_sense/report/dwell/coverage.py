@@ -14,6 +14,8 @@ def coverage_cuts(
     for i, event in enumerate(coverage):
         start = parse_ts(event.ts)
         end = parse_ts(coverage[i + 1].ts) if i + 1 < len(coverage) else horizon
+        if event.payload.get("state") == "legacy_unverified":
+            continue
         if event.payload.get("state") != "observed":
             cuts.append((start, end))
             continue
@@ -47,7 +49,7 @@ def identity_cuts(
     return [
         (parse_ts(event.ts), parse_ts(coverage[i + 1].ts) if i + 1 < len(coverage) else horizon)
         for i, event in enumerate(coverage)
-        if event.payload.get("state") == "observed"
+        if event.payload.get("state") in {"observed", "legacy_unverified"}
         and (
             event.payload.get("source") != source
             or (event.payload.get("window_id") and event.payload.get("window_id") != window_id)

@@ -46,6 +46,7 @@ class CosmicWire:
     def __init__(self, sock: socket.socket) -> None:
         self.sock = sock
         self.sock.setblocking(False)
+        self.deadline = time.monotonic() + 0.25
         self.epoch = uuid4().hex
         self.buffer = bytearray()
         self.next_id = 2
@@ -78,6 +79,7 @@ class CosmicWire:
         try:
             sock.connect(path)
             wire = cls(sock)
+            wire.deadline = time.monotonic() + 1.0
             wire.roundtrip(0.5)
             info = wire.globals.get("zcosmic_toplevel_info_v1")
             foreign = wire.globals.get("ext_foreign_toplevel_list_v1")
@@ -103,7 +105,10 @@ class CosmicWire:
 
     def _send(self, obj: int, opcode: int, data: bytes = b"") -> None:
         msg = _HEADER.pack(obj, ((len(data) + 8) << 16) | opcode) + data
-        _, writable, _ = select.select([], [self.sock], [], 0.25)
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Wayland I/O budget exhausted")
+        _, writable, _ = select.select([], [self.sock], [], remaining)
         if not writable:
             raise TimeoutError("Wayland write timeout")
         self.sock.sendall(msg)
@@ -119,16 +124,23 @@ class CosmicWire:
             self._send(1, 0, _word(self.pending_sync))
 
     def roundtrip(self, timeout: float) -> None:
-        self.ping()
-        deadline = time.monotonic() + timeout
-        while self.pending_sync is not None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("Wayland sync timeout")
-            self.receive(remaining)
+        outer_deadline = self.deadline
+        self.deadline = min(outer_deadline, time.monotonic() + timeout)
+        try:
+            self.ping()
+            while self.pending_sync is not None:
+                remaining = self.deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Wayland sync timeout")
+                self.receive(remaining)
+        finally:
+            self.deadline = outer_deadline
 
     def receive(self, timeout: float = 0.0) -> None:
-        readable, _, _ = select.select([self.sock], [], [], timeout)
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Wayland I/O budget exhausted")
+        readable, _, _ = select.select([self.sock], [], [], min(timeout, remaining))
         if not readable:
             return
         data = self.sock.recv(65536)
@@ -138,6 +150,8 @@ class CosmicWire:
         if len(self.buffer) > _MAX_BUFFER:
             raise ValueError("Wayland buffer limit")
         while len(self.buffer) >= 8:
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError("Wayland dispatch budget exhausted")
             obj, header = _HEADER.unpack_from(self.buffer)
             size, opcode = header >> 16, header & 0xffff
             if size < 8 or size % 4 or size > _MAX_MESSAGE:

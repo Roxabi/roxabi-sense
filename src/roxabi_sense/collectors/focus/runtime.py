@@ -56,10 +56,11 @@ class FocusRuntime:
         for src in self.preferred:
             p = self._probes[src]
             if src == "atspi":
-                # Earlier preferred probes have already failed. The event
-                # agent can establish AT-SPI health after startup.
-                chosen = p
-                break
+                # Only a primary AT-SPI agent is supervised from startup.
+                if src == self.preferred[0] or p.probe():
+                    chosen = p
+                    break
+                continue
             if p.probe():
                 chosen = p
                 break

@@ -152,7 +152,9 @@ class FocusCollector:
             if changed:
                 self._last_focus_key = None
         else:
-            coverage_wrote = 0
+            coverage_wrote = self._coverage.legacy(store, src, windows)
+            if coverage_wrote:
+                self._last_focus_key = None
         wrote = coverage_wrote + initialized_wrote
         if mode in {"full", "desktop"}:
             # ADR-004: probes soft-fail as [] — never emit empty inventory (false
