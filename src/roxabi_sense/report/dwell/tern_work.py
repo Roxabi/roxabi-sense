@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from itertools import pairwise
 
 from roxabi_sense.collectors.tern.metadata import opaque
+from roxabi_sense.report.dwell.coverage import NativeConfirmation
 from roxabi_sense.report.dwell.repos import AgentRepoTime, RepoAttribution, repo_label
 from roxabi_sense.report.dwell.tern_proofs import proof_bounds
 from roxabi_sense.report.segments import FocusSegment
@@ -23,9 +24,10 @@ class TernWork:
     unknown_attention_s: float = 0.0
 
 
-def summarize_tern_work(snapshots: list[Event], raw_meta: str | None,
-                        segments: list[FocusSegment], start: datetime,
-                        horizon: datetime, *, coverage: list[Event] | None = None) -> TernWork:
+def summarize_tern_work(
+    snapshots: list[Event], raw_meta: str | None, segments: list[FocusSegment],
+    start: datetime, horizon: datetime, *, coverage: NativeConfirmation | None = None,
+) -> TernWork:
     """Union shared pane views, classifying OMP work only against known focus."""
     proofs = proof_bounds(snapshots, raw_meta)
     spans: list[tuple[datetime, datetime, str, bool, bool]] = []
@@ -72,7 +74,7 @@ def summarize_tern_work(snapshots: list[Event], raw_meta: str | None,
     bounds = {point for lo, hi, *_ in spans for point in (lo, hi)}
     for segment in segments:
         bounds.update((max(start, parse_ts(segment.start)), min(horizon, parse_ts(segment.end))))
-    coverage_spans = _observed_coverage(coverage or [], start, horizon)
+    coverage_spans = _observed_coverage(coverage, start, horizon)
     bounds.update(point for lo, hi in coverage_spans for point in (lo, hi))
     points = sorted(point for point in bounds if start <= point <= horizon)
     pane_total = omp_total = attended = unattended = unknown = 0.0
@@ -101,14 +103,14 @@ def summarize_tern_work(snapshots: list[Event], raw_meta: str | None,
 def add_tern_work(
     repos: RepoAttribution, snapshots: list[Event], raw_meta: str | None,
     segments: list[FocusSegment], start: datetime, horizon: datetime,
-    *, coverage: list[Event] | None = None,
+    *, coverage: NativeConfirmation | None = None,
 ) -> RepoAttribution:
     proofs = proof_bounds(snapshots, raw_meta)
     intervals: dict[tuple[str, str], list[tuple[datetime, datetime, str | None]]] = (
         defaultdict(list)
     )
     labels: dict[tuple[str, str], str] = {}
-    coverage_spans = _observed_coverage(coverage or [], start, horizon)
+    coverage_spans = _observed_coverage(coverage, start, horizon)
     for index, event in enumerate(snapshots):
         if event.payload.get("state") != "observed":
             continue
@@ -215,19 +217,13 @@ def _proof_event_end(
 
 
 def _observed_coverage(
-    coverage: list[Event], start: datetime, horizon: datetime,
+    coverage: NativeConfirmation | None, start: datetime, horizon: datetime,
 ) -> list[tuple[datetime, datetime]]:
-    """Only native observed coverage can establish known human attention."""
-    result = []
-    for index, event in enumerate(coverage):
-        if event.payload.get("state") != "observed":
-            continue
-        lo = max(start, parse_ts(event.ts))
-        hi = min(horizon, parse_ts(coverage[index + 1].ts)
-                 if index + 1 < len(coverage) else horizon)
-        if lo < hi:
-            result.append((lo, hi))
-    return result
+    """Only native confirmed coverage can establish known human attention."""
+    if coverage is None:
+        return []
+    return [(max(start, lo), min(horizon, hi)) for lo, hi in coverage.observed
+            if max(start, lo) < min(horizon, hi)]
 
 
 def _covered(spans: list[tuple[datetime, datetime]], lo: datetime, hi: datetime) -> bool:

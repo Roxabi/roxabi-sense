@@ -9,6 +9,9 @@ from roxabi_sense.collectors.focus.collector import FocusCollector
 from roxabi_sense.collectors.focus.protocol import FocusWindow
 from roxabi_sense.collectors.tern.collector import TernCollector
 from roxabi_sense.query import SenseQuery
+from roxabi_sense.report.care import compile_care_brief
+from roxabi_sense.report.day import compile_day_recap
+from roxabi_sense.report.dwell.coverage import native_confirmation
 from roxabi_sense.store import Store
 from roxabi_sense.util.time import parse_ts, to_z
 
@@ -274,6 +277,39 @@ def test_same_window_new_epoch_does_not_borrow_previous_bucket_confirmation(
     assert recap.current_attention.stretch is None
     assert brief["current_stretch"] is None
 
+    h.healthy_for(10)
+    later_events = h.events("focus")
+    old = next(e for e in later_events
+               if parse_ts(e.payload["_observed_at"]) == base + timedelta(seconds=5.2))
+    new = next(e for e in later_events
+               if parse_ts(e.payload["_observed_at"]) == base + timedelta(seconds=5.4))
+    assert old.id != new.id
+    assert old.payload["window_id"] == new.payload["window_id"] == "epoch:window"
+    assert old.payload["title"] == new.payload["title"] == "prior epoch"
+    assert old.payload["_native_coverage_id"] != new.payload["_native_coverage_id"]
+    assert coverage[-3].id < coverage[-2].id < coverage[-1].id
+    assert old.payload["_native_coverage_id"] == coverage[-3].id
+    assert new.payload["_native_coverage_id"] == coverage[-1].id
+    native = native_confirmation(
+        coverage, later_events, h.store.get_meta("focus_observation"), coverage[-1].id, h.now
+    )
+    assert any(
+        exclusion.reason == "hard"
+        and exclusion.start == base + timedelta(seconds=5.2)
+        and exclusion.end == base + timedelta(seconds=5.4)
+        for exclusion in native.exclusions
+    )
+    recovered = next(span for span in native.spans if span.event.id == coverage[-1].id)
+    assert recovered.start == base + timedelta(seconds=5.4)
+    assert len(later_events) == len(events)
+    renewed, _ = h.recap()
+    current = renewed.current_attention
+    assert current is not None and current.stretch is not None
+    assert parse_ts(current.context_started_at) == base + timedelta(seconds=5.4)
+    assert parse_ts(current.stretch.start) == base + timedelta(seconds=5.4)
+    assert parse_ts(current.stretch.end) <= base + timedelta(seconds=15.4)
+    assert current.stretch.duration_s <= 10
+
 
 def test_process_failure_does_not_cut_independent_pane_work(harness):
     h = harness
@@ -306,3 +342,185 @@ def test_restart_fences_old_live_proof_before_native_focus(harness):
     assert "agent" not in newest.payload
     recap, _ = h.recap()
     assert sum(s.duration_s for s in recap.focus_segments if s.context_ref) == 5
+
+
+@pytest.mark.parametrize(
+    ("first_minutes", "second_seconds", "expected"), [(30, 900, 2699.6), (41, 2, 2459.8)]
+)
+def test_fractional_same_session_window_change_keeps_confirmed_current_run(
+    tmp_path, first_minutes, second_seconds, expected,
+):
+    with Store(tmp_path / "sense.db") as store:
+        start = parse_ts(store.day_bounds(DAY)[0]) + timedelta(hours=12)
+        switch = start + timedelta(minutes=first_minutes)
+        confirmed = switch + timedelta(seconds=second_seconds)
+        now = confirmed + timedelta(seconds=1)
+        store.append("idle", {"idle": False}, ts=to_z(start))
+        agent = {"agent": "agent", "session_id": "session-s"}
+        coverage_id = 0
+        for stamp, window in ((start, "epoch:a"), (switch, "epoch:b")):
+            coverage_id = store.append("focus_coverage", {
+                "state": "observed", "source": "cosmic", "window_id": window,
+            }, ts=to_z(stamp))
+            observed = (stamp + timedelta(milliseconds=200)).isoformat()
+            store.append("focus", {
+                "app": "editor", "title": "shell", "source": "cosmic",
+                "window_id": window, "agent": agent, "_observed_at": observed,
+                "_native_observed_at": observed, "_native_coverage_id": coverage_id,
+            }, ts=to_z(stamp))
+        store.set_meta("focus_observation", json.dumps({
+            "coverage_id": coverage_id, "source": "cosmic", "window_id": "epoch:b",
+            "last_observed_at": to_z(confirmed),
+            "fresh_until": to_z(confirmed + timedelta(seconds=8)), "healthy": True,
+        }))
+        recap = compile_day_recap(store, DAY, now=now)
+        brief = compile_care_brief(recap, {"state": "active"}, now=now)
+
+    current = recap.current_attention
+    assert current is not None and current.quality == "observed"
+    assert current.window_id == "epoch:b"
+    assert current.stretch is not None
+    assert current.context_started_at is not None
+    assert parse_ts(current.context_started_at) == start + timedelta(milliseconds=200)
+    assert parse_ts(current.stretch.start) == start + timedelta(milliseconds=200)
+    assert current.stretch.duration_s == pytest.approx(expected)
+    assert brief["current_stretch"] is not None
+    assert brief["current_stretch"]["minutes"] == round(expected / 60, 2)
+    assert "long_focus" in brief["signals"]
+
+
+@pytest.mark.parametrize("proof_gap", [False, True, "expired"])
+def test_tern_shared_pane_handoff_retired_route_keeps_proven_current_run(
+    harness, monkeypatch, proof_gap,
+):
+    h = harness
+    base = h.now
+    base_boot = h.boot
+    markers = ("a" * 16, "b" * 16)
+    routes = ("route-a", "route-b")
+    retired = False
+    selected = 0
+    wire = h.probe.wire
+    assert wire is not None
+
+    def registrations():
+        return [
+            {"token": markers[i], "boot_id": "boot",
+             "expires_boottime": base_boot + 24 if proof_gap == "expired" and i == 0
+             else h.boot + 100,
+             "endpoint_ref": "endpoint", "window_key": routes[i], "conn": i + 1, "since": 2}
+            for i in range(2) if not (retired and i == 0)
+        ]
+
+    monkeypatch.setattr("roxabi_sense.collectors.focus.tern.read_registrations", registrations)
+
+    def windows():
+        result = []
+        for i in range(2):
+            if retired and i == 0:
+                continue
+            window = {**h.window(), "window_key": routes[i], "conn": i + 1}
+            if proof_gap == "expired" and i == 0:
+                window["_registration_expires_boot"] = base_boot + 24
+            result.append(window)
+        return result
+
+    def observe():
+        indices = [i for i in range(2) if not (retired and i == 0)]
+        wire.handles = {
+            i + 1: {"committed": {"identifier": routes[i], "active": i == selected}}
+            for i in indices
+        }
+        wire.ack_observed_at = h.now
+        h.probe.observed_at = h.now
+        inventory = [
+            FocusWindow(APP, f"[sense:t1:{markers[i]}] shell", i == selected,
+                        window_id=f"epoch:{routes[i]}")
+            for i in indices
+        ]
+        h.collector.apply(h.store, inventory, mode="focus", source="cosmic")
+
+    def poll():
+        h.writer.publish(h.store, windows())
+        observe()
+
+    h.advance(0.2)
+    poll()
+    if proof_gap == "expired":
+        for _ in range(3):
+            h.advance(5)
+            poll()
+        h.advance(4.9)
+        poll()
+        old_focus = h.events("focus")[-1]
+        old_ref = old_focus.payload["context"]["proof_ref"]
+        h.advance(5.3)
+        selected = 1
+        observe()
+        new_focus = h.events("focus")[-1]
+        assert new_focus.payload["context"]["ref"] == old_focus.payload["context"]["ref"]
+        assert new_focus.payload["context"]["proof_ref"] != old_ref
+        assert parse_ts(new_focus.payload["_observed_at"]) == base + timedelta(seconds=25.4)
+        retired = True
+        h.advance(2.5)
+        poll()
+        closed = [item for event in h.events("tern_snapshot")
+                  for item in event.payload["closed"] if item["proof_ref"] == old_ref]
+        assert len(closed) == 1
+        assert parse_ts(closed[0]["confirmed_through"]) == base + timedelta(seconds=20.1)
+        assert parse_ts(closed[0]["eligible_until"]) == base + timedelta(seconds=24)
+        h.advance(5)
+        poll()
+        recap, _ = h.recap()
+        current = recap.current_attention
+        assert current is not None and current.stretch is not None
+        assert parse_ts(current.context_started_at) == base + timedelta(seconds=25.4)
+        assert parse_ts(current.stretch.start) == base + timedelta(seconds=25.4)
+        assert current.stretch.duration_s == pytest.approx(6.6)
+        return
+    for _ in range(359):
+        h.advance(5)
+        poll()
+    h.advance(4.8)
+    h.writer.publish(h.store, windows())
+    h.advance(0.2)
+    selected = 1
+    observe()
+    focus = h.events("focus")
+    assert len(focus) == 2
+    first_context = focus[0].payload["context"]
+    second_context = focus[1].payload["context"]
+    assert first_context["ref"] == second_context["ref"]
+    assert first_context["proof_ref"] != second_context["proof_ref"]
+
+    retired = True
+    h.advance(5)
+    poll()
+    closures = [closed for event in h.events("tern_snapshot")
+                for closed in event.payload["closed"]]
+    assert any(item["proof_ref"] == first_context["proof_ref"] for item in closures)
+    recovery = None
+    for step in range(179):
+        h.advance(5)
+        if proof_gap and step == 90:
+            h.writer.publish(h.store, None)
+            observe()
+            h.advance(5)
+            recovery = h.now
+        poll()
+    recap, brief = h.recap()
+    current = recap.current_attention
+    assert current is not None and current.stretch is not None
+    assert current.window_id == "epoch:route-b"
+    if proof_gap:
+        assert recovery is not None
+        assert parse_ts(current.context_started_at) == recovery
+        assert parse_ts(current.stretch.start) == recovery
+        assert current.stretch.duration_s == pytest.approx(439.8)
+        assert "long_focus" not in brief["signals"]
+    else:
+        assert parse_ts(current.context_started_at) == base + timedelta(seconds=0.2)
+        assert parse_ts(current.stretch.start) == base + timedelta(seconds=0.2)
+        assert current.stretch.duration_s == pytest.approx(2699.6)
+        assert brief["current_stretch"]["minutes"] == 44.99
+        assert "long_focus" in brief["signals"]

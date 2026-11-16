@@ -108,7 +108,8 @@ _COARSE_DROP_KEYS = frozenset(
         "session_context_ref", "semantic_ref",
         "scope_ref", "run_ref", "snapshot_id",
         "window_key", "window_id", "marker", "token", "conn", "since", "closed",
-        "scopes", "fresh_until", "last_observed_at", "started_at", "expires_boottime",
+        "scopes", "fresh_until", "eligible_until", "last_observed_at", "started_at",
+        "expires_boottime",
         "_observed_at", "_native_observed_at", "_native_coverage_id", "_published_at",
     }
 )

@@ -1,7 +1,6 @@
 import json
 from datetime import UTC, datetime
 
-from roxabi_sense.report.dwell.current_attention import _key
 from roxabi_sense.report.dwell.repos import RepoAttribution, attribute_repos
 from roxabi_sense.report.dwell.tern_proofs import ProofIndex, current_context, project_timeline
 from roxabi_sense.report.dwell.tern_work import add_tern_work, summarize_tern_work
@@ -42,7 +41,6 @@ def test_proof_renewal_and_expiry_preserve_native_focus():
     assert segments[0].duration_s == 1200
     assert segments[0].context_ref == "context"
     assert segments[1].context_ref is None
-    assert _key(normalized[0]) != _key(normalized[1])
     index = ProofIndex([snapshot], observation())
     assert current_context(
         focus(), index, datetime(2026, 1, 1, 0, 20, 30, tzinfo=UTC)
@@ -76,6 +74,12 @@ def test_coarse_drops_private_refs():
                           "window_key": "secret", "pane_work_proof_ref": "secret",
                           "process_proof_ref": "secret", "agent_proof_ref": "secret",
                           "app": "Tern"}) == {"app": "Tern"}
+
+
+def test_coarse_redacts_standalone_eligibility_deadline():
+    assert redact_coarse({"eligible_until": "private-expiry", "state": "observed"}) == {
+        "state": "observed",
+    }
 
 
 def test_coarse_redacts_precise_observation_recursively_and_in_json():

@@ -25,6 +25,21 @@ def _sample_stamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+
+def _close(proof: dict[str, Any], now: datetime, clock: float) -> dict[str, str]:
+    """Seal confirmation and the distinct last possible live-eligibility boundary."""
+    result = {"proof_ref": proof["proof_ref"], "started_at": proof["started_at"],
+              "confirmed_through": proof["last_observed_at"]}
+    try:
+        fresh = parse_ts(proof["fresh_until"])
+        expiry = float(proof["expires_boottime"])
+        if fresh.tzinfo is not None and math.isfinite(expiry):
+            elapsed = max(0.0, clock - expiry)
+            result["eligible_until"] = _sample_stamp(min(fresh, now - timedelta(seconds=elapsed)))
+    except (KeyError, TypeError, ValueError, OverflowError):
+        pass
+    return result
+
 def _public(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _public(item) for key, item in value.items()
@@ -161,9 +176,7 @@ class ObservationWriter:
                     or clock >= proof["expires_boottime"]):
                 if not healthy or candidate is None:
                     self.watermarks[scope] = max(clock, self.watermarks.get(scope, 0.0))
-                closed.append({"proof_ref": proof["proof_ref"],
-                               "started_at": proof["started_at"],
-                               "confirmed_through": proof["last_observed_at"]})
+                closed.append(_close(proof, now, clock))
             else:
                 next_scopes[scope] = proof
 
@@ -216,6 +229,7 @@ class ObservationWriter:
 
     def expire(self, store: Store) -> int:
         """Seal expired scopes once, without publishing healthy heartbeats."""
+        now = datetime.now(UTC)
         clock = _clock()
         expired = {scope for scope, proof in self.scopes.items()
                    if clock >= proof["expires_boottime"]}
@@ -223,10 +237,7 @@ class ObservationWriter:
             return 0
         for scope in expired:
             self.watermarks[scope] = max(clock, self.watermarks.get(scope, 0.0))
-        closed = [{"proof_ref": self.scopes[scope]["proof_ref"],
-                   "started_at": self.scopes[scope]["started_at"],
-                   "confirmed_through": self.scopes[scope]["last_observed_at"]}
-                  for scope in sorted(expired)]
+        closed = [_close(self.scopes[scope], now, clock) for scope in sorted(expired)]
         remaining = {scope: proof for scope, proof in self.scopes.items() if scope not in expired}
         windows = []
         for window in self.public_windows:

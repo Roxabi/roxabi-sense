@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from roxabi_sense.report.away import AwaySegment
-from roxabi_sense.report.dwell.coverage import coverage_cuts, identity_cuts
+from roxabi_sense.report.dwell.coverage import NativeConfirmation, identity_cuts
 from roxabi_sense.report.dwell.projection import project_focus
 from roxabi_sense.report.dwell.tern_proofs import FocusProjection
 from roxabi_sense.store import Event
@@ -178,15 +178,13 @@ def focus_segments(
     away: list[AwaySegment],
     *,
     horizon: datetime,
-    coverage_events: list[Event] | None = None,
+    native: NativeConfirmation | None = None,
 ) -> list[FocusSegment]:
     """Attribute focus dwell (fine grain: app+title), cutting out away gaps."""
     if isinstance(focus_events, FocusProjection):
         observations = [(r.at, r.history) for r in focus_events.records if r.history_eligible]
-        raw_events = focus_events.raw
     else:
         observations = [(parse_ts(e.ts), e) for e in focus_events]
-        raw_events = focus_events
     if not observations:
         return []
     collapsed: list[tuple[datetime, Any]] = []
@@ -197,8 +195,8 @@ def focus_segments(
         collapsed.append((t, fields))
 
     away_ranges = [(parse_ts(a.start), parse_ts(a.end)) for a in away]
-    coverage = sorted(coverage_events or [], key=lambda e: (parse_ts(e.ts), e.id))
-    away_ranges.extend(coverage_cuts(coverage, raw_events, horizon))
+    if native is not None:
+        away_ranges.extend((cut.start, cut.end) for cut in native.exclusions)
     segs: list[FocusSegment] = []
     for i, row in enumerate(collapsed):
         t0, fields = row
@@ -207,7 +205,7 @@ def focus_segments(
         t1 = collapsed[i + 1][0] if i + 1 < len(collapsed) else horizon
         if t1 < t0:
             t1 = t0
-        mismatches = identity_cuts(coverage, horizon, source, window_id)
+        mismatches = identity_cuts(native, source, window_id) if native else []
         for a0, a1 in _subtract_ranges(t0, t1, away_ranges + mismatches):
             dur = (a1 - a0).total_seconds()
             if dur < MIN_DWELL_S:

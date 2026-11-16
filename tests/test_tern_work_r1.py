@@ -3,6 +3,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
 from roxabi_sense.collectors.tern.metadata import opaque
+from roxabi_sense.report.dwell.coverage import NativeConfirmation, NativeSpan
 from roxabi_sense.report.dwell.repos import RepoAttribution, attribute_repos
 from roxabi_sense.report.dwell.tern_work import add_tern_work, summarize_tern_work
 from roxabi_sense.report.segments import FocusSegment
@@ -35,16 +36,19 @@ def pane(repo, proof, path='/projects/demo'):
             'pane_working': True, 'omp_foreground': True}
 
 
-def coverage(second, state):
-    return Event(10 + second, ts(second), 'focus_coverage', {'state': state})
+def coverage(start, end):
+    event = Event(10, ts(start), 'focus_coverage', {'state': 'observed'})
+    return NativeConfirmation(
+        spans=[NativeSpan(event, START + timedelta(seconds=start), START + timedelta(seconds=end))],
+        exclusions=[], confirmed_through=None,
+    )
 
 
 def test_attention_requires_observed_coverage_and_partitions_it():
     p = pane('private-repo', 'proof')
     snapshots, meta = facts([p])
     editor = FocusSegment(ts(0), ts(60), 60, 'editor', 'Editor')
-    cov = [coverage(0, 'legacy_unverified'), coverage(20, 'observed'),
-           coverage(40, 'unknown')]
+    cov = coverage(20, 40)
     result = summarize_tern_work(snapshots, meta, [editor], START, END, coverage=cov)
     assert (result.omp_working_s, result.attended_s, result.unattended_s,
             result.unknown_attention_s) == (60, 0, 20, 40)
@@ -60,7 +64,7 @@ def test_context_matching_and_unknown_tern_context():
     ref = opaque('context', p['pane_ref'], None, p['repo_ref'])
     segments = [FocusSegment(ts(0), ts(30), 30, 'so.stencil.tern', 'Tern', context_ref=ref),
                 FocusSegment(ts(30), ts(60), 30, 'so.stencil.tern', 'Tern')]
-    cov = [coverage(0, 'observed')]
+    cov = coverage(0, 60)
     result = summarize_tern_work(snapshots, meta, segments, START, END, coverage=cov)
     assert (result.attended_s, result.unattended_s, result.unknown_attention_s) == (30, 0, 30)
     repos = add_tern_work(RepoAttribution([], [], None), snapshots, meta, segments,

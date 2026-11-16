@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from roxabi_sense.report.dwell.projection import project_focus
+from roxabi_sense.report.dwell.proof_eligibility import closed_eligibility, is_applicable
 from roxabi_sense.store import Event
 from roxabi_sense.util.time import parse_ts, to_z_precise
 
@@ -88,6 +89,7 @@ class ProofIndex:
 
     def __init__(self, snapshots: list[Event], raw_meta: str | None) -> None:
         self.bounds = proof_bounds(snapshots, raw_meta)
+        self.eligible_until = closed_eligibility(snapshots, self.bounds)
         self.live_until: dict[str, datetime] = {}
         closed: set[str] = set()
         for event in snapshots:
@@ -113,6 +115,7 @@ class ProofIndex:
                 fresh = parse_ts(item["fresh_until"])
                 if fresh.tzinfo is not None and start <= end <= fresh:
                     self.live_until[ref] = fresh
+                    self.eligible_until[ref] = fresh
         except (KeyError, TypeError, ValueError):
             return
 
@@ -129,11 +132,13 @@ class ProofIndex:
         return start <= at < end
 
 
-def _attachment(event: Event, index: ProofIndex, at: datetime, *, live: bool) -> Event:
+def _attachment(event: Event, index: ProofIndex, at: datetime, *,
+                live: bool, continuity: bool = False) -> Event:
     context = event.payload.get("context")
     if not isinstance(context, dict) or context.get("source") != "tern":
         return event
-    eligible = index.live if live else index.confirmed
+    eligible = (lambda ref, stamp: is_applicable(index.bounds, index.eligible_until, ref, stamp)
+                ) if continuity else (index.live if live else index.confirmed)
     if not eligible(context.get("proof_ref"), at):
         return clear_context(event)
     if "agent" in event.payload and not eligible(context.get("agent_proof_ref"), at):
@@ -220,6 +225,9 @@ def project_timeline(
             if isinstance(ref, str) and ref in index.bounds:
                 points.update(t for t in index.bounds[ref]
                               if begin < t < end or (pos == len(ordered) - 1 and t == end))
+                deadline = index.eligible_until.get(ref)
+                if deadline is not None and begin < deadline < end:
+                    points.add(deadline)
         title_change = context_change = True
         semantic_change = False
         previous_context = previous.payload.get("context") if previous is not None else None
@@ -245,22 +253,15 @@ def project_timeline(
             raw_boundary = at == begin
             stamped = replace(event, ts=to_z_precise(at))
             history = _attachment(stamped, index, at, live=False)
-            occurrence = _attachment(stamped, index, at, live=False)
-            ref = context.get("proof_ref")
-            if (isinstance(ref, str) and index.live(ref, horizon) and ref in index.bounds
-                    and at >= index.bounds[ref][0]):
-                occurrence = _attachment(stamped, index, horizon, live=True)
-                agent_ref = context.get("agent_proof_ref")
-                if (isinstance(agent_ref, str) and agent_ref in index.bounds
-                        and at < index.bounds[agent_ref][0]):
-                    payload = dict(occurrence.payload)
-                    payload.pop("agent", None)
-                    occurrence = replace(occurrence, payload=payload)
+            occurrence = _attachment(stamped, index, at, live=False, continuity=True)
             if context and at < known_from:
                 history = clear_context(history)
                 occurrence = clear_context(occurrence)
             barrier = (raw_boundary and previous is not None and previous_ref is not None
-                       and proof_ref != previous_ref and not index.live(previous_ref, horizon))
+                       and proof_ref != previous_ref and (
+                           not isinstance(previous_ref, str) or previous_ref not in index.bounds
+                           or index.eligible_until.get(
+                               previous_ref, index.bounds[previous_ref][1]) < begin))
             records.append(FocusRecord(
                 at, event, history, occurrence, history_ids is None or event.id in history_ids,
                 (raw_boundary and title_change) or (at == known_from > begin and semantic_change),
