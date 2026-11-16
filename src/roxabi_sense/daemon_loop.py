@@ -30,8 +30,27 @@ _ATSPI_RESPAWN_BASE_S = 2.0
 _ATSPI_RESPAWN_MAX_S = 60.0
 
 
-def run_main_loop(
+def run_main_loop(**kwargs: Any) -> None:
+    collector = kwargs.pop("tern_collector", None)
+    worker = None
+    if kwargs["focus"] is not None:
+        from roxabi_sense.collectors.tern.collector import TernCollector
+        from roxabi_sense.collectors.tern.worker import TernWorker
+
+        worker = TernWorker(collector if collector is not None else TernCollector())
+    try:
+        if worker is not None:
+            worker.collector.start(kwargs["store"])
+            worker.start()
+        _run_main_loop(tern_worker=worker, **kwargs)
+    finally:
+        if worker is not None:
+            worker.close(kwargs["store"])
+
+
+def _run_main_loop(
     *,
+    tern_worker: Any,
     cfg: SenseConfig,
     store: Store,
     focus: FocusCollector | None,
@@ -60,6 +79,8 @@ def run_main_loop(
     next_native = now0 + 1.0
 
     boot_cols = list(poll_collectors)
+    if tern_worker is not None:
+        tern_worker.poll(store)
     if focus is not None:
         boot_cols.append(focus)
     wrote = tick_all(boot_cols, store)
@@ -77,6 +98,8 @@ def run_main_loop(
     while not stop_flag():
         now = time.monotonic()
         deadlines = [next_poll]
+        if tern_worker is not None:
+            deadlines.append(now + 1.0)
         if focus_rt is not None and focus_rt.active.source == "cosmic":
             deadlines.append(next_native)
         if events_enabled and focus is not None:
@@ -87,6 +110,9 @@ def run_main_loop(
             deadlines.append(atspi_respawn_at)
         wait = max(0.05, min(deadlines) - now)
 
+        if tern_worker is not None:
+            tern_worker.poll(store)
+
         try:
             batch = [atspi_q.get(timeout=wait)]
             while True:
@@ -94,6 +120,8 @@ def run_main_loop(
                     batch.append(atspi_q.get_nowait())
                 except queue.Empty:
                     break
+            if tern_worker is not None:
+                tern_worker.poll(store)
             for msg in batch:
                 if msg.get("type") == "ready" and focus_rt is not None:
                     focus_rt.mark_atspi(store, healthy=True)
@@ -110,6 +138,9 @@ def run_main_loop(
                 )
         except queue.Empty:
             pass
+
+        if tern_worker is not None:
+            tern_worker.poll(store)
 
         while True:
             try:
@@ -200,6 +231,7 @@ def run_main_loop(
                 atspi_backoff = min(_ATSPI_RESPAWN_MAX_S, atspi_backoff * 2)
             else:
                 events_enabled, focus_on_poll = sync_focus_mode(agent)
+
 
         if (
             focus is not None

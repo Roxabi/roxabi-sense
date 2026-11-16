@@ -18,6 +18,8 @@ class FocusFields(NamedTuple):
     agent_pid: int | None
     window_id: str | None
     source: str | None
+    context_ref: str | None
+    repo_ref: str | None
 
 
 def _integer(value: object) -> int | None:
@@ -34,10 +36,13 @@ def project_focus(event: Event) -> FocusFields:
     payload = event.payload
     raw_agent = payload.get("agent")
     agent = raw_agent if isinstance(raw_agent, dict) else {}
+    raw_context = payload.get("context")
+    context = raw_context if isinstance(raw_context, dict) else {}
     return FocusFields(
         norm_app(str(payload.get("app") or "")),
         normalize_title(str(payload.get("title") or "")),
-        str(agent["cwd"]) if agent.get("cwd") else None,
+        str(context.get("cwd") or agent.get("cwd"))
+        if context.get("cwd") or agent.get("cwd") else None,
         str(agent["agent"]) if agent.get("agent") else None,
         _integer(payload.get("pid")),
         str(agent["session_id"]) if agent.get("session_id") else None,
@@ -45,4 +50,6 @@ def project_focus(event: Event) -> FocusFields:
         _integer(agent.get("pid")),
         str(payload["window_id"]) if payload.get("window_id") else None,
         str(payload["source"]) if payload.get("source") else None,
+        str(context["ref"]) if context.get("ref") else None,
+        str(context["repo_ref"]) if context.get("repo_ref") else None,
     )

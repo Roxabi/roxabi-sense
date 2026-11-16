@@ -40,6 +40,17 @@ def summarize_event(kind: str, payload: dict[str, Any]) -> str:
             if isinstance(p, dict)
         ]
         return f"n={payload.get('count')} " + "; ".join(bits)
+    if kind == "tern_snapshot":
+        windows = payload.get("windows")
+        windows = windows if isinstance(windows, list) else []
+        panes = sum(
+            len(window["panes"])
+            for window in windows
+            if isinstance(window, dict) and isinstance(window.get("panes"), list)
+        )
+        state = payload.get("state")
+        state = state if state in ("observed", "unknown") else "unknown"
+        return f"state={state} windows={len(windows)} panes={panes}"
     if kind == "process_snapshot":
         procs = payload.get("processes") or {}
         running = [k for k, v in procs.items() if isinstance(v, dict) and v.get("running")]
@@ -102,6 +113,16 @@ _COARSE_DROP_KEYS = frozenset(
         "pane_title",
         "terminal_title",
         "terminal_title_stripped",
+        "context", "context_ref", "repo_ref", "host_ref", "pane_ref", "endpoint_ref",
+        "shown_pane", "shown_pane_ref", "selected_pane", "selected_pane_ref",
+        "focused_pane", "focused_pane_ref",
+        "proof_ref", "pane_work_proof_ref", "process_proof_ref", "agent_proof_ref",
+        "session_context_ref", "semantic_ref",
+        "scope_ref", "run_ref", "snapshot_id",
+        "window_key", "window_id", "marker", "token", "conn", "since", "closed",
+        "scopes", "fresh_until", "eligible_until", "last_observed_at", "started_at",
+        "expires_boottime",
+        "_observed_at", "_native_observed_at", "_native_coverage_id", "_published_at",
     }
 )
 

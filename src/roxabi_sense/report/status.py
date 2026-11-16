@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from roxabi_sense.report.dwell.tern_proofs import (
+    ProofIndex,
+    clear_context,
+    current_context,
+    focus_observed_at,
+)
 from roxabi_sense.report.presence import (
     DEFAULT_IDLE_THRESHOLD_S,
     DEFAULT_OFFLINE_THRESHOLD_S,
@@ -16,7 +22,7 @@ from roxabi_sense.report.presence import (
     presence_from_store,
 )
 from roxabi_sense.store import STATUS_KINDS, Event, Store
-from roxabi_sense.util.time import parse_ts
+from roxabi_sense.util.time import parse_ts, to_z
 
 
 @dataclass(frozen=True)
@@ -57,7 +63,7 @@ class StatusSnapshot:
 
 
 def current_focus(
-    snapshot: StatusSnapshot, *, now: datetime | None = None
+    snapshot: StatusSnapshot, *, now: datetime | None = None, proof_index: ProofIndex | None = None
 ) -> tuple[Event | None, str]:
     """Return current focus only when its matching observation is still healthy."""
     now = now or datetime.now(UTC)
@@ -65,7 +71,7 @@ def current_focus(
     coverage = snapshot.latest_by_kind.get("focus_coverage")
     legacy = snapshot.latest_by_kind.get("focus_legacy")
     try:
-        if focus is not None and parse_ts(focus.ts) > now:
+        if focus is not None and focus_observed_at(focus) > now:
             return None, "unknown"
     except (TypeError, ValueError):
         return None, "unknown"
@@ -76,14 +82,19 @@ def current_focus(
         and focus.ts >= legacy.ts
         and focus.payload.get("source") == legacy.payload.get("source")
     ):
-        return focus, "legacy_unverified"
+        return clear_context(focus), "legacy_unverified"
     if coverage is None:
-        return focus, "legacy_unverified"
+        return (clear_context(focus) if focus is not None else None), "legacy_unverified"
     if focus is None or not snapshot.db_exists or not snapshot.db_path.is_file():
         return None, "unknown"
     try:
         with Store(snapshot.db_path) as store:
             raw = store.get_meta("focus_observation")
+            if proof_index is None:
+                tern_meta = store.get_meta("tern_observation")
+                snapshots = list(store.iter_kind_before(
+                    "tern_snapshot", to_z(now + timedelta(seconds=1))))
+                proof_index = ProofIndex(snapshots, tern_meta)
         observation = json.loads(raw) if raw else {}
         if (
             isinstance(observation, dict)
@@ -100,7 +111,7 @@ def current_focus(
             and parse_ts(observation["last_observed_at"]) <= now
             and parse_ts(observation["fresh_until"]) > now
         ):
-            return focus, "observed"
+            return current_context(focus, proof_index, now), "observed"
     except (OSError, ValueError, TypeError, KeyError):
         pass
     return None, "unknown"

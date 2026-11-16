@@ -34,12 +34,18 @@ def test_truncated_focus_stops_at_focus_witness_not_unrelated_event(
             "state": "observed", "source": "cosmic", "window_id": "1:1",
         }, ts=at(0))
         focus = {"app": "editor", "title": "work", "source": "cosmic", "window_id": "1:1"}
-        store.append("focus", focus, ts=at(0))
+        store.append("focus", {
+            **focus, "_observed_at": at(0), "_native_observed_at": at(0),
+            "_native_coverage_id": coverage_id,
+        }, ts=at(0))
         for seq, (second, state) in enumerate(
             ((2, "joined"), (8, "joined"), (15, "joined"), (20, "not_joined"))
         ):
             if second == 15:
-                store.append("focus", focus, ts=at(10))
+                store.append("focus", {
+                    **focus, "_observed_at": at(10), "_native_observed_at": at(10),
+                    "_native_coverage_id": coverage_id,
+                }, ts=at(10))
             store.append("meeting_snapshot", {
                 "v": 1, "scope": "chrome_google_meet", "source_id": SOURCE,
                 "epoch": EPOCH, "seq": seq, "complete": True,

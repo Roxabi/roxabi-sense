@@ -20,6 +20,12 @@ jobs:
           package-manager-cache: false
       - name: Install dependencies
         run: uv sync --frozen --all-extras --group dev
+      - name: Install Lua 5.4
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends lua5.4
+          command -v lua5.4
+          lua5.4 -v
       - name: Lint
         run: uv run ruff check .
       - name: Typecheck

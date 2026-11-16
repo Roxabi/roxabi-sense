@@ -15,5 +15,10 @@ def to_z(dt: datetime) -> str:
     return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def to_z_precise(dt: datetime) -> str:
+    """Format UTC without discarding a genuine fractional timestamp."""
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
 def utc_now_z() -> str:
     return to_z(datetime.now(UTC))

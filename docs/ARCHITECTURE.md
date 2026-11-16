@@ -143,6 +143,31 @@ stay on the workstation. Local stdio MCP remains for offline / workstation agent
    its last confirmed health observation, retaining older unverified history.
 4. **Process presence** — `pgrep`-class checks for configured app names.  
 5. **Mux** — `tmux_snapshot` (tmux panes) **and** `herdr_snapshot` (live Herdr/OMP agents: pane_id, cwd, agent, status, focused, session_id, `title` = agent session title with spinner/π chrome stripped — never raw terminal titles, dropped by coarse redaction; plus `focused` = server-focused pane `{pane_id, cwd}` incl. plain shells; keyframe every 300 s). Ghostty→Herdr→OMP is the live stack; tmux+grok still works. Report layer (`report/dwell/repos.py`): **focus per repo** = terminal focus × Herdr focused pane (Ghostty titles go stale across multi-client views; bare `comm` never attributes); **agent time per repo and per session** = wall time with a pane `working`, split by whether it was in your focus; snapshots trusted ≤ 900 s (suspend / daemon down).
+6. **Tern** — `tern_snapshot` is a separate metadata source. Exact-window
+   inspections and exact-pane foreground-process checks distinguish selected
+   context from background work; a busy pane alone does not prove OMP runs.
+   The optional owned window plugin publishes a random title marker via a
+   private, boot-scoped, expiring registration. Only a unique marker in the
+   complete native inventory and matching endpoint/client incarnation can
+   attach Tern context to focus; failures leave native focus intact and context
+   unknown. The collector does not read terminal buffers or conversation files.
+   Acquisition runs in one bounded, cancellable worker, independently of native
+   polling; only the owning daemon thread publishes to the store. Discovery may
+   use the combined unscoped CLI response for its client inventory alone; all
+   pane and process facts use explicit routes. Semantic transitions are events;
+   unchanged source-health observations are metadata. Proof freshness is
+   anchored to each scope's request, and historical credit to confirmed sample
+   bounds, never to worker completion or publication time.
+   Selected structure, pane work and exact-pane foreground process have separate
+   proof lifetimes; OMP work intersects pane and process evidence. A new owner
+   seals its predecessor's proofs before native composition. History uses both
+   proof bounds; a live lease validates current context without extending dwell.
+   Quiet-window renewal works around the installed SDK's timer wake behavior by
+   chaining completions of one bounded waiting Sense helper per window. Unload
+   may overlap it with one terminal token-specific unregister; an unpublished
+   in-flight registration can remain until its BOOTTIME lease expires. The
+   workaround is removable only after quiet-window timer and quiet-reload
+   bootstrap checks pass on the installed SDK.
 
 Focus failure must not block agent-session collection.
 

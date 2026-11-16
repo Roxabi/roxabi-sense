@@ -1,0 +1,6 @@
+schema = 1
+id = "roxabi-sense"
+name = "Roxabi Sense"
+version = "0.1.0"
+description = "Private window identity bridge"
+window = "window.luau"

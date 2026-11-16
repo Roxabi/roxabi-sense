@@ -52,6 +52,7 @@ TIMELINE_KINDS: tuple[str, ...] = (
     "media",
     "media_snapshot",
     "tmux_snapshot",
+    "tern_snapshot",
     "focus",
     "focus_coverage",
     "focus_legacy",
@@ -115,11 +116,7 @@ class Store:
         self._batch_depth = 0
 
     def _harden_files(self) -> None:
-        for p in (
-            self.path,
-            Path(str(self.path) + "-wal"),
-            Path(str(self.path) + "-shm"),
-        ):
+        for p in (self.path, Path(str(self.path) + "-wal"), Path(str(self.path) + "-shm")):
             if p.is_file():
                 try:
                     os.chmod(p, 0o600)
@@ -241,6 +238,16 @@ class Store:
             (start, end, lim),
         ).fetchall()
         return [self._row(r) for r in rows]
+
+    def iter_kind_before(self, kind: str, end: str) -> Iterator[Event]:
+        """Stream one source's facts in deterministic timestamp/id order."""
+        rows = self._conn.execute(
+            "SELECT id, ts, kind, payload FROM events WHERE kind = ? AND ts < ? "
+            "ORDER BY ts ASC, id ASC",
+            (kind, end),
+        )
+        for row in rows:
+            yield self._row(row)
 
     def events_for_day(
         self,

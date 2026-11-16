@@ -22,7 +22,7 @@ that the daemon was down or the machine suspended, so such a hole adds at most
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -59,6 +59,19 @@ class RepoAttribution:
     focus: list[tuple[str, float]]
     agents: list[AgentRepoTime]
     focused_repo_now: str | None
+
+
+def _with_current_repo(repos: RepoAttribution, active_focus: Event | None) -> RepoAttribution:
+    if active_focus is not None:
+        context = active_focus.payload.get("context")
+        if isinstance(context, dict) and context.get("source") == "tern":
+            cwd = context.get("cwd")
+            return replace(
+                repos, focused_repo_now=repo_label(cwd) if isinstance(cwd, str) and cwd else None
+            )
+        if active_focus.payload.get("app") == "so.stencil.tern":
+            return replace(repos, focused_repo_now=None)
+    return repos
 
 
 @dataclass(frozen=True)
@@ -105,6 +118,12 @@ def attribute_repos(
     spans = _spans([prior, *snaps] if prior is not None else snaps, window_start, horizon)
     attn, linked = _attention(spans, segments)
     focus: dict[str, float] = defaultdict(float, linked)
+    tern_focus: dict[str, tuple[str, float]] = {}
+    for seg in segments:
+        if (seg.app == "so.stencil.tern" and seg.context_ref and seg.repo_ref
+                and seg.cwd and seg.agent_match != "comm" and seg.duration_s > _EPS_S):
+            label, seconds = tern_focus.get(seg.repo_ref, (repo_label(seg.cwd), 0.0))
+            tern_focus[seg.repo_ref] = (label, seconds + seg.duration_s)
     working: dict[str, float] = defaultdict(float)
     focused_on: dict[str, float] = defaultdict(float)
     session_work: dict[tuple[str, str], float] = defaultdict(float)
@@ -146,7 +165,7 @@ def attribute_repos(
         for repo, secs in ranked_repos
     ]
     return RepoAttribution(
-        focus=_ranked(focus),
+        focus=sorted([*_ranked(focus), *tern_focus.values()], key=lambda kv: (-kv[1], kv[0])),
         agents=agents,
         focused_repo_now=live.focused_repo if live is not None else None,
     )
@@ -205,7 +224,7 @@ def _attention(
 
     Spans and segments are both sorted and disjoint (two-pointer sweep).
     """
-    terminal = [s for s in segments if is_terminal_app(s.app)]
+    terminal = [s for s in segments if s.app != "so.stencil.tern" and is_terminal_app(s.app)]
     bounds = [(parse_ts(s.start), parse_ts(s.end)) for s in terminal]
     covered = [0.0] * len(terminal)
     per_span = [0.0] * len(spans)
@@ -227,7 +246,7 @@ def _attention(
     for seg, (lo, hi), cov in zip(terminal, bounds, covered, strict=True):
         _credit_link(linked, seg, (hi - lo).total_seconds() - cov)
     for seg in segments:
-        if not is_terminal_app(seg.app):
+        if seg.app != "so.stencil.tern" and not is_terminal_app(seg.app):
             _credit_link(linked, seg, seg.duration_s)
     return per_span, linked
 

@@ -22,6 +22,7 @@ class FocusWindow:
     title_raw: str | None = None
     agent: dict[str, Any] | None = None
     window_id: str | None = None
+    context: dict[str, Any] | None = None
 
 
 @runtime_checkable
