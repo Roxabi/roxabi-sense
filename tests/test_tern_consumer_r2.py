@@ -524,3 +524,105 @@ def test_tern_shared_pane_handoff_retired_route_keeps_proven_current_run(
         assert current.stretch.duration_s == pytest.approx(2699.6)
         assert brief["current_stretch"]["minutes"] == 44.99
         assert "long_focus" in brief["signals"]
+
+
+def test_empty_native_gap_after_last_proof_cannot_resurrect_old_stretch(harness):
+    h = harness
+    base = h.now
+    h.advance(0.1)
+    h.poll()
+    h.healthy_for(41 * 60)
+    assert h.now == base + timedelta(minutes=41, seconds=0.1)
+    h.advance(0.9)
+    h.focus()
+    before = h.events("focus")
+    h.advance(0.2)
+    h.probe.reason = "disconnected"
+    h.collector.apply(h.store, [], mode="focus", source="cosmic")
+    assert len(h.events("focus")) == len(before)
+    h.advance(0.2)
+    h.probe.reason = "observed"
+    recovered = h.now
+    h.focus()
+    after = h.events("focus")
+    assert len(after) == len(before) + 1
+    assert after[-1].payload["context"]["ref"] == before[-1].payload["context"]["ref"]
+    assert after[-1].payload["context"]["proof_ref"] == before[-1].payload["context"]["proof_ref"]
+    assert [event.payload["state"] for event in h.events("focus_coverage")[-3:]] == [
+        "observed", "unknown", "observed",
+    ]
+    h.advance(0.6)
+    recap, brief = h.recap()
+    assert recap.current_attention is not None
+    assert recap.current_attention.stretch is None
+    assert brief["current_stretch"] is None
+    assert "long_focus" not in brief["signals"]
+
+    h.advance(3.4)
+    h.poll()
+    h.advance(5)
+    h.poll()
+    renewed, brief = h.recap()
+    assert renewed.current_attention is not None
+    assert renewed.current_attention.stretch is not None
+    assert parse_ts(renewed.current_attention.context_started_at) == base + timedelta(seconds=0.1)
+    assert parse_ts(renewed.current_attention.coverage_started_at) == recovered
+    assert parse_ts(renewed.current_attention.stretch.start) == recovered
+    assert renewed.current_attention.stretch.duration_s == pytest.approx(8.6)
+    assert "long_focus" not in brief["signals"]
+
+
+@pytest.mark.parametrize("post_reentry_seconds", [0, 10])
+def test_native_unknown_legacy_native_reentry_excludes_legacy_current_fragments(
+    tmp_path, post_reentry_seconds,
+):
+    with Store(tmp_path / "sense.db") as store:
+        start = parse_ts(store.day_bounds(DAY)[0]) + timedelta(hours=12)
+        reentry = start + timedelta(seconds=30)
+        confirmed = reentry + timedelta(seconds=post_reentry_seconds)
+        now = confirmed + timedelta(seconds=1)
+        agent = {"agent": "agent", "session_id": "session-s"}
+        store.append("idle", {"idle": False}, ts=to_z(start))
+        first = store.append("focus_coverage", {
+            "state": "observed", "source": "cosmic", "window_id": "epoch:a",
+        }, ts=to_z(start))
+        store.append("focus", {
+            "app": "editor", "title": "shell", "source": "cosmic", "window_id": "epoch:a",
+            "agent": agent, "_observed_at": to_z(start), "_native_observed_at": to_z(start),
+            "_native_coverage_id": first,
+        }, ts=to_z(start))
+        store.append("focus_coverage", {"state": "unknown", "source": "cosmic"},
+                     ts=to_z(start + timedelta(seconds=10)))
+        store.append("focus_legacy", {"source": "atspi"},
+                     ts=to_z(start + timedelta(seconds=15)))
+        store.append("focus", {
+            "app": "editor", "title": "shell", "source": "atspi", "agent": agent,
+            "_observed_at": to_z(start + timedelta(seconds=15)),
+        }, ts=to_z(start + timedelta(seconds=15)))
+        last = store.append("focus_coverage", {
+            "state": "observed", "source": "cosmic", "window_id": "epoch:b",
+        }, ts=to_z(reentry))
+        store.append("focus", {
+            "app": "editor", "title": "shell", "source": "cosmic", "window_id": "epoch:b",
+            "agent": agent, "_observed_at": to_z(reentry),
+            "_native_observed_at": to_z(reentry), "_native_coverage_id": last,
+        }, ts=to_z(reentry))
+        store.set_meta("focus_observation", json.dumps({
+            "coverage_id": last, "source": "cosmic", "window_id": "epoch:b",
+            "last_observed_at": to_z(confirmed),
+            "fresh_until": to_z(confirmed + timedelta(seconds=8)), "healthy": True,
+        }))
+        recap = compile_day_recap(store, DAY, now=now)
+        brief = compile_care_brief(recap, {"state": "active"}, now=now)
+
+    current = recap.current_attention
+    assert current is not None and current.quality == "observed"
+    assert current.window_id == "epoch:b"
+    if post_reentry_seconds == 0:
+        assert current.stretch is None
+        assert brief["current_stretch"] is None
+    else:
+        assert current.stretch is not None
+        assert parse_ts(current.stretch.start) == reentry
+        assert current.stretch.duration_s == 10
+        assert brief["current_stretch"]["minutes"] == 0.17

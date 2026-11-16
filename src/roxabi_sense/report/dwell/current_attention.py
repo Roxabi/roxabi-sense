@@ -79,10 +79,10 @@ def resolve_current_attention(
     cuts.extend((parse_ts(a.start), parse_ts(a.end)) for a in away)
     blocked = False
     for begin, finish in cuts:
-        if begin <= end:
-            if begin < end < finish:
+        if begin <= now and finish >= begin:
+            if begin <= now < finish:
                 blocked = True
-            elif finish <= end:
+            elif finish <= now:
                 floor = max(floor, finish)
     floor = max(floor, day_start)
     pieces = sorted(

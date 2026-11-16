@@ -145,6 +145,13 @@ def native_confirmation(
     for i, epoch in enumerate(epochs):
         state = epoch.payload.get("state")
         next_start = starts[i + 1] if i + 1 < len(epochs) else horizon
+        if i and state in {"observed", "legacy_unverified"}:
+            previous = epochs[i - 1]
+            if (previous.payload.get("state") != state
+                    or previous.payload.get("source") != epoch.payload.get("source")):
+                boundary = (max(starts[i], _publication(matching[i][0]))
+                            if matching[i] else starts[i])
+                exclusions.append(NativeExclusion(boundary, boundary, "hard"))
         if state == "observed":
             start = starts[i]
             if matching[i]:
