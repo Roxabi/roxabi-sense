@@ -346,8 +346,8 @@ The opt-in Chrome Google Meet connector observes recognized call UI, not human
 attention or server-side attendance. It is disabled by default. Coverage is
 limited to registered Chrome Google Meet sources, not all meeting apps. Unknown
 or unsupported UI and missing, stale or conflicted sources are not proof that
-no call occurred. Recognition uses specific English UI labels; other languages,
-redesigned or reconnecting layouts can be unknown. Joined and reconnecting
+no call occurred. Recognition uses specific French and English UI labels; other
+languages, redesigned or reconnecting layouts can be unknown. Joined and reconnecting
 layouts have not been validated in a real call; this is not a real deployment.
 
 `meeting_total_s` unions observed call intervals; title-derived legacy signals
