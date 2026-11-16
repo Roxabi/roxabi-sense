@@ -17,9 +17,9 @@ from typing import Any
 
 from roxabi_sense.report.away import AwaySegment
 from roxabi_sense.report.dwell.coverage import coverage_cuts, identity_cuts
+from roxabi_sense.report.dwell.projection import project_focus
 from roxabi_sense.store import Event
 from roxabi_sense.util.time import parse_ts, to_z
-from roxabi_sense.util.titles import normalize_title
 
 MIN_DWELL_S = 3.0  # ignore micro-focus flickers (fine title segments)
 _APP_ALIASES: dict[str, str] = {
@@ -193,23 +193,8 @@ def focus_segments(
         ]
     ] = []
     for e in focus_events:
-        app = norm_app(str(e.payload.get("app") or ""))
-        title = normalize_title(str(e.payload.get("title") or ""))
-        ag = e.payload.get("agent") if isinstance(e.payload.get("agent"), dict) else {}
-        cwd_s = str(ag["cwd"]) if isinstance(ag, dict) and ag.get("cwd") else None
-        agent_s = str(ag["agent"]) if isinstance(ag, dict) and ag.get("agent") else None
-        sid = (
-            str(ag["session_id"])
-            if isinstance(ag, dict) and ag.get("session_id")
-            else None
-        )
-        match_s = (
-            str(ag["match"]) if isinstance(ag, dict) and ag.get("match") else None
-        )
-        agent_pid = _as_int(ag.get("pid")) if isinstance(ag, dict) else None
-        win_pid = _as_int(e.payload.get("pid"))
-        window_id = str(e.payload["window_id"]) if e.payload.get("window_id") else None
-        source = str(e.payload["source"]) if e.payload.get("source") else None
+        (app, title, cwd_s, agent_s, win_pid, sid, match_s, agent_pid,
+         window_id, source) = project_focus(e)
         t = parse_ts(e.ts)
         if (
             collapsed and collapsed[-1][1] == app and collapsed[-1][2] == title
@@ -267,12 +252,6 @@ def focus_segments(
     return segs
 
 
-def _as_int(raw: Any) -> int | None:
-    if isinstance(raw, int):
-        return raw
-    if isinstance(raw, str) and raw.isdigit():
-        return int(raw)
-    return None
 
 
 def _subtract_ranges(

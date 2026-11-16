@@ -64,6 +64,11 @@ def current_focus(
     focus = snapshot.latest_by_kind.get("focus")
     coverage = snapshot.latest_by_kind.get("focus_coverage")
     legacy = snapshot.latest_by_kind.get("focus_legacy")
+    try:
+        if focus is not None and parse_ts(focus.ts) > now:
+            return None, "unknown"
+    except (TypeError, ValueError):
+        return None, "unknown"
     if (
         legacy is not None
         and (coverage is None or legacy.id > coverage.id)

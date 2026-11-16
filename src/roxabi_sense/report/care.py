@@ -12,9 +12,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from roxabi_sense.report.clock.pause import _current_stretch, _last_away, _pause_clock
+from roxabi_sense.report.clock.pause import _last_away, _pause_clock
 from roxabi_sense.report.event_summary import cap_json_bytes
-from roxabi_sense.report.segments import is_terminal_app, norm_app
+from roxabi_sense.report.segments import is_terminal_app
 from roxabi_sense.util.time import parse_ts
 
 _BRIEF_APPS = 8
@@ -59,22 +59,15 @@ def compile_care_brief(
             "minutes": round(float(getattr(best, "duration_s", 0.0) or 0.0) / 60.0, 2),
         }
     pres_state = str(presence.get("state") or "")
-    if hasattr(recap, "current_focus_binding"):
-        binding = recap.current_focus_binding
-        if binding is None:
-            attn = []
-        else:
-            since, app, window_id = binding
-            attn = [
-                segment for segment in attn
-                if segment.end > since and segment.app == norm_app(app)
-                and (window_id is None or segment.window_id == window_id)
-            ]
-    current = (
-        _current_stretch(attn, now=n, presence_state=pres_state)
-        if getattr(recap, "current_focus_quality", "legacy_unverified") != "unknown"
-        else None
-    )
+    current_attention = recap.current_attention
+    current = None
+    if pres_state == "active" and current_attention is not None:
+        stretch = current_attention.stretch
+        if stretch is not None:
+            current = {
+                "app": current_attention.app,
+                "minutes": round(stretch.duration_s / 60.0, 2),
+            }
     focused_repo = getattr(recap, "focused_repo_now", None)
     if current is not None and focused_repo and is_terminal_app(str(current.get("app"))):
         current = {**current, "repo": focused_repo}

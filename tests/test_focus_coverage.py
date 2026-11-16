@@ -213,7 +213,8 @@ def test_native_loss_then_legacy_source_is_unverified_not_lost(tmp_path: Path) -
     assert dict(recap.time_by_app)["editor"] == 60
     assert dict(recap.time_by_app)["browser"] == 60
     assert recap.focus_coverage_quality == "legacy_unverified"
-    assert recap.current_focus_quality == "legacy_unverified"
+    assert recap.current_attention is not None
+    assert recap.current_attention.quality == "legacy_unverified"
 
 
 def test_native_ghostty_uses_terminal_classification(tmp_path: Path) -> None:

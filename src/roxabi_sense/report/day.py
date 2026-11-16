@@ -14,6 +14,7 @@ from typing import Any
 
 from roxabi_sense.report.away import IDLE_GAP_S, AwaySegment, away_segments
 from roxabi_sense.report.dwell.aggregate import hour_apps, top_titles
+from roxabi_sense.report.dwell.current_attention import CurrentAttention, resolve_current_attention
 from roxabi_sense.report.dwell.repos import HERDR_KIND, AgentRepoTime, attribute_repos
 from roxabi_sense.report.dwell.stays import TerminalStayStats, terminal_stay_stats
 from roxabi_sense.report.enrich import (
@@ -82,8 +83,7 @@ class DayRecap:
     hour_apps: list[tuple[str, list[tuple[str, float]]]]
     session_shape: str | None
     focus_coverage_quality: str = "legacy_unverified"
-    current_focus_quality: str = "legacy_unverified"
-    current_focus_binding: tuple[str, str, str | None] | None = None
+    current_attention: CurrentAttention | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -137,9 +137,10 @@ def compile_day_recap(
     ]
     if prior_coverage is not None:
         coverage.insert(0, prior_coverage)
-        prior_focus = store.last_by_kind_before("focus", start)
-        if prior_focus is not None:
-            focus_ev.insert(0, replace(prior_focus, ts=start))
+    prior_focus = store.last_by_kind_before("focus", start)
+    if prior_focus is not None:
+        focus_ev.insert(0, replace(prior_focus, ts=start))
+    raw_coverage = list(coverage)
     latest_coverage = coverage[-1] if coverage else None
     overall_coverage = store.last_by_kind("focus_coverage")
     raw_observation = store.get_meta("focus_observation")
@@ -198,14 +199,11 @@ def compile_day_recap(
     app_sw = switch_count(segments, key=lambda s: s.app)
     ctx_sw = switch_count(attn)
     active_focus, active_quality = current_focus(status_snapshot(store), now=horizon)
-    binding = None
-    if active_focus is not None:
-        window_id = active_focus.payload.get("window_id")
-        binding = (
-            active_focus.ts,
-            str(active_focus.payload.get("app") or ""),
-            str(window_id) if window_id else None,
-        )
+    current_attention = resolve_current_attention(
+        current=active_focus, quality=active_quality, focus=focus_ev, coverage=raw_coverage,
+        attention=attn, away=away, day_start=parse_ts(start), now=horizon,
+        raw_observation=raw_observation,
+    )
 
     return DayRecap(
         day=day_label,
@@ -248,8 +246,7 @@ def compile_day_recap(
             and all(e.ts >= coverage[0].ts for e in focus_ev)
             else "legacy_unverified"
         ),
-        current_focus_quality=active_quality,
-        current_focus_binding=binding,
+        current_attention=current_attention,
     )
 
 

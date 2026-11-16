@@ -278,8 +278,9 @@ Focus is one collector (`kind=focus`) with swappable **FocusProbe** backends. Th
   metadata, not heartbeat events. Unknown or stale coverage is not counted as
   focus dwell. Historical focus without coverage, including a later fallback
   source marked by `focus_legacy`, is `legacy_unverified`, not certified native
-  coverage. Recaps bind the current stretch to the current focus observation;
-  coverage gaps do not count as context switches or extend a pre-gap stretch.
+  coverage. Recaps derive current attention from validated focus, continuous
+  coverage and the same app/session context used for aggregation: title changes
+  do not restart a stretch, but gaps and context changes do.
   A per-database nonblocking ownership lock prevents `collect --once`
   from replacing a running daemon's focus observation; other collectors still run.
 - **AT-SPI** — long-lived fallback agent (system Python + `gi`) when accessibility works.

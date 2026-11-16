@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from roxabi_sense.report.care import compile_care_brief
+from roxabi_sense.report.dwell.current_attention import CurrentAttention, CurrentStretch
 
 # 17:00 UTC → hour ≥ 16 in UTC and CEST.
 NOW = datetime(2026, 9, 17, 17, 0, tzinfo=UTC)
@@ -32,6 +33,7 @@ def _recap(**kw: object) -> SimpleNamespace:
         "away_total_s": 0.0,
         "session_shape": "steady",
         "attention_segments": [],
+        "current_attention": None,
         "away_segments": [],
         "terminal_stays": None,
         "meeting_sessions": [],
@@ -49,7 +51,11 @@ def test_current_stretch_is_open_segment_not_day_max() -> None:
         attention_segments=[
             _seg("slack", 50, "2026-09-17T10:00:00Z"),
             _seg("ghostty", 12, "2026-09-17T16:59:30Z"),
-        ]
+        ],
+        current_attention=CurrentAttention(
+            quality="legacy_unverified", app="ghostty",
+            stretch=CurrentStretch("2026-09-17T16:47:30Z", "2026-09-17T16:59:30Z", 720),
+        ),
     )
     body = compile_care_brief(recap, {"state": "active"}, now=NOW)
     assert body["longest_focus_app"] == {"app": "slack", "minutes": 50.0}
