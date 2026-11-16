@@ -33,7 +33,7 @@ class CosmicFocusProbe:
             self.wire = CosmicWire.connect(self.env)
         except (OSError, ValueError, TimeoutError, struct.error):
             return False
-        self.observed_at = None
+        self.observed_at = self.wire.ack_observed_at
         self.reason = "pending_batch"
         self._ping_at = time.monotonic()
         return True
@@ -63,7 +63,7 @@ class CosmicFocusProbe:
                 before = wire.ack_at
                 wire.receive()
                 if wire.ack_at != before:
-                    self.observed_at = datetime.now(UTC)
+                    self.observed_at = wire.ack_observed_at
             if wire.pending_sync is None:
                 wire.ping()
                 self._ping_at = now

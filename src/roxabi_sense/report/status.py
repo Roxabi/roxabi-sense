@@ -92,7 +92,6 @@ def current_focus(
             and focus.ts >= coverage.ts
             and parse_ts(focus.ts) <= now
             and isinstance(observation.get("last_observed_at"), str)
-            and observation["last_observed_at"] >= coverage.ts
             and parse_ts(observation["last_observed_at"]) <= now
             and parse_ts(observation["fresh_until"]) > now
         ):

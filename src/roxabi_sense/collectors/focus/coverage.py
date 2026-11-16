@@ -16,6 +16,7 @@ class CoverageWriter:
         self.current: tuple[str, str | None, str] | None = None
         self.event_id: int | None = None
         self.last_observed: str | None = None
+        self.observed_start: str | None = None
         self.initialized = False
 
     def initialize(self, store: Store) -> int:
@@ -92,9 +93,11 @@ class CoverageWriter:
         self, store: Store, probe: CosmicFocusProbe, windows: list[FocusWindow]
     ) -> tuple[int, bool]:
         active = [w for w in windows if w.active]
-        observed = probe.reason == "observed" and len(active) == 1
+        observed = probe.reason == "observed" and len(active) == 1 and probe.observed_at is not None
         window_id = active[0].window_id if observed else None
-        reason = "observed" if observed else probe.reason
+        reason = "observed" if observed else (
+            "pending_health" if probe.reason == "observed" else probe.reason
+        )
         state = "observed" if observed else "unknown"
         key = (state, window_id, reason)
         changed = key != self.current
@@ -102,12 +105,13 @@ class CoverageWriter:
         if changed:
             ts = utc_now_z()
             if self.current is not None and self.current[0] == "observed" and not observed:
-                ts = self.last_observed or ts
+                ts = max(self.last_observed or "", self.observed_start or ts)
             payload: dict[str, Any] = {"state": state, "source": probe.source, "reason": reason}
             if window_id:
                 payload["window_id"] = window_id
             self.event_id = store.append("focus_coverage", payload, ts=ts)
             self.current = key
+            self.observed_start = ts if observed else None
             self.last_observed = None
             wrote = 1
         if observed and probe.observed_at is not None:

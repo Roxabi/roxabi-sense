@@ -83,6 +83,7 @@ class DayRecap:
     session_shape: str | None
     focus_coverage_quality: str = "legacy_unverified"
     current_focus_quality: str = "legacy_unverified"
+    current_focus_binding: tuple[str, str, str | None] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -196,6 +197,15 @@ def compile_day_recap(
     title_sw = sum(a.end == b.start for a, b in pairwise(segments))
     app_sw = switch_count(segments, key=lambda s: s.app)
     ctx_sw = switch_count(attn)
+    active_focus, active_quality = current_focus(status_snapshot(store), now=horizon)
+    binding = None
+    if active_focus is not None:
+        window_id = active_focus.payload.get("window_id")
+        binding = (
+            active_focus.ts,
+            str(active_focus.payload.get("app") or ""),
+            str(window_id) if window_id else None,
+        )
 
     return DayRecap(
         day=day_label,
@@ -238,7 +248,8 @@ def compile_day_recap(
             and all(e.ts >= coverage[0].ts for e in focus_ev)
             else "legacy_unverified"
         ),
-        current_focus_quality=current_focus(status_snapshot(store), now=horizon)[1],
+        current_focus_quality=active_quality,
+        current_focus_binding=binding,
     )
 
 

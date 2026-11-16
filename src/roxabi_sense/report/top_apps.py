@@ -11,7 +11,7 @@ from typing import Any
 
 from roxabi_sense.report.away import AwaySegment
 from roxabi_sense.report.dwell.aggregate import sum_by
-from roxabi_sense.report.segments import FocusSegment
+from roxabi_sense.report.segments import FocusSegment, switch_count
 
 # Minimum tracked focus before session_shape is meaningful.
 _SHAPE_MIN_TRACKED_S = 900.0  # 15 minutes
@@ -84,7 +84,7 @@ def session_shape(
     if denom > 0 and away_s / denom >= 0.45:
         return "drifted"
 
-    switches = max(0, len(segments) - 1)
+    switches = switch_count(segments)
     hours = max(tracked / 3600.0, 1.0 / 60.0)  # floor 1 minute
     switch_rate = switches / hours
     dwells = [s.duration_s for s in segments if s.duration_s > 0]

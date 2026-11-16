@@ -10,6 +10,7 @@ import select
 import socket
 import struct
 import time
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -61,6 +62,7 @@ class CosmicWire:
         self.ready = False
         self.dirty = False
         self.ack_at = 0.0
+        self.ack_observed_at: datetime | None = None
         self.pending_sync: int | None = None
         self._send(1, 1, _word(self.registry))
         self.commit_at = 0.0
@@ -178,6 +180,7 @@ class CosmicWire:
             if obj == self.pending_sync:
                 self.pending_sync = None
                 self.ack_at = time.monotonic()
+                self.ack_observed_at = datetime.now(UTC)
             self.objects.pop(obj, None)
             return
         if kind == "registry":
