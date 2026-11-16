@@ -26,7 +26,6 @@ class CurrentAttention:
     app: str | None = None
     source: str | None = None
     window_id: str | None = None
-    context_key: tuple[str, ...] | None = None
     coverage_started_at: str | None = None
     context_started_at: str | None = None
     confirmed_through: str | None = None
@@ -63,7 +62,7 @@ def resolve_current_attention(
         previous_key = event_key
     if previous_key != key:
         return CurrentAttention(quality=quality, app=fields.app, source=fields.source,
-                                window_id=fields.window_id, context_key=key)
+                                window_id=fields.window_id)
 
     confirmed: datetime | None = None
     if quality == "observed":
@@ -105,7 +104,7 @@ def resolve_current_attention(
             break
     return CurrentAttention(
         quality=quality, app=fields.app, source=fields.source, window_id=fields.window_id,
-        context_key=key, coverage_started_at=to_z(floor),
+        coverage_started_at=to_z(floor),
         context_started_at=to_z(context_floor),
         confirmed_through=to_z(confirmed) if confirmed is not None else None,
         stretch=selected,

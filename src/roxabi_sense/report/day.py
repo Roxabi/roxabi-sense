@@ -138,8 +138,19 @@ def compile_day_recap(
     if prior_coverage is not None:
         coverage.insert(0, prior_coverage)
     prior_focus = store.last_by_kind_before("focus", start)
+    raw_focus = list(focus_ev)
     if prior_focus is not None:
-        focus_ev.insert(0, replace(prior_focus, ts=start))
+        carried = replace(prior_focus, ts=start)
+        raw_focus.insert(0, carried)
+        if (
+            prior_coverage is not None
+            and prior_coverage.payload.get("state") == "observed"
+            and prior_coverage.payload.get("source") == "cosmic"
+            and bool(prior_coverage.payload.get("window_id"))
+            and prior_focus.payload.get("source") == "cosmic"
+            and prior_focus.payload.get("window_id") == prior_coverage.payload.get("window_id")
+        ):
+            focus_ev.insert(0, carried)
     raw_coverage = list(coverage)
     latest_coverage = coverage[-1] if coverage else None
     overall_coverage = store.last_by_kind("focus_coverage")
@@ -200,7 +211,7 @@ def compile_day_recap(
     ctx_sw = switch_count(attn)
     active_focus, active_quality = current_focus(status_snapshot(store), now=horizon)
     current_attention = resolve_current_attention(
-        current=active_focus, quality=active_quality, focus=focus_ev, coverage=raw_coverage,
+        current=active_focus, quality=active_quality, focus=raw_focus, coverage=raw_coverage,
         attention=attn, away=away, day_start=parse_ts(start), now=horizon,
         raw_observation=raw_observation,
     )

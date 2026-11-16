@@ -196,24 +196,9 @@ def focus_segments(
         (app, title, cwd_s, agent_s, win_pid, sid, match_s, agent_pid,
          window_id, source) = project_focus(e)
         t = parse_ts(e.ts)
-        if (
-            collapsed and collapsed[-1][1] == app and collapsed[-1][2] == title
-            and collapsed[-1][9] == window_id and collapsed[-1][10] == source
+        if collapsed and collapsed[-1][1:] == (
+            app, title, cwd_s, agent_s, win_pid, sid, match_s, agent_pid, window_id, source
         ):
-            prev = collapsed[-1]
-            collapsed[-1] = (
-                prev[0],
-                app,
-                title,
-                cwd_s or prev[3],
-                agent_s or prev[4],
-                win_pid if win_pid is not None else prev[5],
-                sid or prev[6],
-                match_s or prev[7],
-                agent_pid if agent_pid is not None else prev[8],
-                window_id,
-                source,
-            )
             continue
         collapsed.append(
             (t, app, title, cwd_s, agent_s, win_pid, sid, match_s, agent_pid, window_id, source)
