@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {webcrypto} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
+import {Worker} from 'node:worker_threads';
 
 globalThis.crypto ??= webcrypto;
 const source = await readFile(new URL('../../src/roxabi_sense/collectors/meeting_browser/extension/worker.js', import.meta.url), 'utf8');
@@ -48,6 +49,55 @@ function fixture() {
 
 const sender = {id: 'extension', tab: {id: 4}, frameId: 0, documentId: 'doc', url: 'https://meet.google.com/abc'};
 const observed = (nonce) => ({kind: 'meeting-observation', nonce, tab_id: 'e69d16b8-c48a-48f2-ad17-5c6117958034', state: 'joined', basis: 'leave_control'});
+
+test('Chrome startup wakes the worker and preserves one native session per generation', async () => {
+  const worker = new Worker(`
+    const {parentPort, workerData} = require('node:worker_threads');
+    const assert = require('node:assert/strict');
+    const {webcrypto} = require('node:crypto');
+    const fixture = ${fixture.toString()};
+    const f = fixture();
+    const listeners = [];
+    let synchronous = true;
+    let startupRegisteredSynchronously = false;
+    let firstChromeAccess = true;
+    f.api.runtime.onStartup = {addListener(listener) {
+      startupRegisteredSynchronously ||= synchronous;
+      listeners.push(listener);
+    }};
+    Object.defineProperty(globalThis, 'chrome', {get() {
+      if (firstChromeAccess) {
+        firstChromeAccess = false;
+        queueMicrotask(() => { synchronous = false; });
+      }
+      return f.api;
+    }});
+    globalThis.crypto = webcrypto;
+    globalThis.setTimeout = f.timers.setTimeout;
+    globalThis.clearTimeout = f.timers.clearTimeout;
+    (async () => {
+      await import(workerData.url);
+      await new Promise((resolve) => setImmediate(resolve));
+      for (const listener of listeners) listener();
+      for (const listener of listeners) listener();
+      await new Promise((resolve) => setImmediate(resolve));
+      f.timers.run(5000);
+      await new Promise((resolve) => setImmediate(resolve));
+      parentPort.postMessage({startupRegisteredSynchronously, frames: f.frames, ports: f.ports.length});
+    })().catch((error) => { throw error; });
+  `, {eval: true, workerData: {url: `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`}});
+  const result = await new Promise((resolve, reject) => {
+    worker.once('message', resolve);
+    worker.once('error', reject);
+    worker.once('exit', (code) => { if (code !== 0) reject(new Error(`Worker exited with ${code}`)); });
+  });
+  assert.equal(result.startupRegisteredSynchronously, true);
+  assert.deepEqual(result.frames, [
+    {v: 1, seq: 0, complete: true, tabs: []},
+    {v: 1, seq: 1, complete: true, tabs: []},
+  ]);
+  assert.equal(result.ports, 1);
+});
 
 test('real content confirmation gates home observations sent by the worker', async () => {
   const content = await readFile(new URL(

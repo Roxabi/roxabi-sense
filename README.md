@@ -405,6 +405,12 @@ invoking `sense` installation available for the lifetime of the registration.
    and `recap`. A recognized leave control indicates UI evidence only, not
    attendance or attention; unknown coverage is expected for unsupported states.
 
+For an already loaded unpacked extension, update the files in its existing
+directory and click **Reload** for it once in `chrome://extensions`. Keeping
+the directory preserves the extension ID and native-host registration.
+After restarting Chrome, `sense doctor` should report fresh Meet coverage
+within a few seconds, even with no Meet tab open.
+
 Registration is **user-data-directory-wide**: the manifest and launcher live in
 `NativeMessagingHosts` under the profile directory's parent. `--profile` locates
 that directory but does not authenticate or isolate the profile. Alternatively,

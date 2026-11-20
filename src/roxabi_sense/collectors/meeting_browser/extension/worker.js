@@ -108,4 +108,15 @@ export function createCollector(api, timers = globalThis) {
   return {start, stop: disconnect};
 }
 
-if (typeof chrome !== 'undefined' && chrome.runtime?.connectNative) createCollector(chrome).start();
+if (typeof chrome !== 'undefined' && chrome.runtime?.connectNative) {
+  const collector = createCollector(chrome);
+  let started = false;
+  const startOnce = () => {
+    if (started) return;
+    started = true;
+    collector.start();
+  };
+  // Chrome wakes an installed worker at profile startup only if it listens for the event.
+  chrome.runtime.onStartup.addListener(startOnce);
+  startOnce();
+}
