@@ -379,7 +379,7 @@ invoking `sense` installation available for the lifetime of the registration.
    meeting_browser = true
    ```
 
-3. Export to a new or empty directory, then open `chrome://extensions`, enable
+3. Export to a path that does not exist yet, then open `chrome://extensions`, enable
    **Developer mode**, choose **Load unpacked**, and select that directory.
    Copy the exact **ID** shown on the loaded extension's card. Keep the directory.
 
@@ -405,6 +405,16 @@ invoking `sense` installation available for the lifetime of the registration.
    and `recap`. A recognized leave control indicates UI evidence only, not
    attendance or attention; unknown coverage is expected for unsupported states.
 
+To update an existing unpacked extension, run the export command in step 3
+from the updated Sense installation with a new destination. Copy the files into
+the directory Chrome already uses, then click **Reload** once in
+`chrome://extensions`. Keeping the directory preserves the extension ID and
+native-host registration.
+To verify automatic startup, quit Chrome completely and reopen the same
+profile. Wait at least 10 seconds so pre-restart observations expire, then
+run `sense --config "$CONFIG" doctor`. The Meet check should be OK without
+opening a Meet tab.
+
 Registration is **user-data-directory-wide**: the manifest and launcher live in
 `NativeMessagingHosts` under the profile directory's parent. `--profile` locates
 that directory but does not authenticate or isolate the profile. Alternatively,
@@ -413,16 +423,17 @@ instead of `--profile`; these options are mutually exclusive. Multiple profiles
 with the same extension ID can start competing hosts for one source. A conflict
 stops writers and latches coverage unknown; it does not automatically expire.
 
-To disable collection, set `meeting_browser = false` in the same config; the
-host reloads consent before writing. To remove registration, use the same config,
-profile path and extension ID:
+To stop recording, set `meeting_browser = false` in the same config; the
+host reloads consent before writing. Disable the extension in
+`chrome://extensions` to stop its native-host connection attempts as well.
+To remove the native-host registration, use the same config, profile path
+and extension ID:
 
 ```bash
 sense --config "$CONFIG" meeting-browser remove --profile "$PROFILE" --extension-id "$EXTENSION_ID"
 ```
 
-Disable or remove the unpacked extension in `chrome://extensions` as well. For
-conflict recovery, first stop the duplicate producers, complete owned removal,
+For conflict recovery, first stop the duplicate producers, complete owned removal,
 then reinstall and leave only one producer active. If installation or removal
 was interrupted by a terminated process, including SIGKILL, complete owned
 cleanup using the same config and database before a fresh install:
