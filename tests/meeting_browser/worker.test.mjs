@@ -60,38 +60,37 @@ test('Chrome startup wakes the worker and preserves one native session per gener
     const listeners = [];
     let synchronous = true;
     let startupRegisteredSynchronously = false;
-    let firstChromeAccess = true;
+    globalThis.markModuleEvaluation = () => queueMicrotask(() => { synchronous = false; });
     f.api.runtime.onStartup = {addListener(listener) {
       startupRegisteredSynchronously ||= synchronous;
       listeners.push(listener);
     }};
-    Object.defineProperty(globalThis, 'chrome', {get() {
-      if (firstChromeAccess) {
-        firstChromeAccess = false;
-        queueMicrotask(() => { synchronous = false; });
-      }
-      return f.api;
-    }});
+    globalThis.chrome = f.api;
     globalThis.crypto = webcrypto;
     globalThis.setTimeout = f.timers.setTimeout;
     globalThis.clearTimeout = f.timers.clearTimeout;
     (async () => {
       await import(workerData.url);
       await new Promise((resolve) => setImmediate(resolve));
+      const initial = {frames: structuredClone(f.frames), ports: f.ports.length};
       for (const listener of listeners) listener();
       for (const listener of listeners) listener();
       await new Promise((resolve) => setImmediate(resolve));
       f.timers.run(5000);
       await new Promise((resolve) => setImmediate(resolve));
-      parentPort.postMessage({startupRegisteredSynchronously, frames: f.frames, ports: f.ports.length});
+      parentPort.postMessage({startupRegisteredSynchronously, initial, frames: f.frames, ports: f.ports.length});
     })().catch((error) => { throw error; });
-  `, {eval: true, workerData: {url: `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`}});
+  `, {eval: true, workerData: {url: `data:text/javascript;base64,${Buffer.from(`globalThis.markModuleEvaluation();\n${source}`).toString('base64')}`}});
   const result = await new Promise((resolve, reject) => {
     worker.once('message', resolve);
     worker.once('error', reject);
     worker.once('exit', (code) => { if (code !== 0) reject(new Error(`Worker exited with ${code}`)); });
   });
   assert.equal(result.startupRegisteredSynchronously, true);
+  assert.deepEqual(result.initial, {
+    frames: [{v: 1, seq: 0, complete: true, tabs: []}],
+    ports: 1,
+  });
   assert.deepEqual(result.frames, [
     {v: 1, seq: 0, complete: true, tabs: []},
     {v: 1, seq: 1, complete: true, tabs: []},
